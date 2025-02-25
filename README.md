@@ -8,13 +8,13 @@ The application performs detailed financial modeling, Monte Carlo simulations, a
 
 🌟 Features
 
-Comprehensive Analysis: Compare all three strategies with detailed metrics
-Monte Carlo Simulations: Generate bull, bear, and base case scenarios based on hundreds of simulations
-Liquidation Risk Analysis: Monitor when BTC price changes might trigger liquidation events
-Interactive Visualizations: Explore dynamic charts showing performance, risk profiles, and time-series projections
-Customizable Parameters: Adjust all inputs to match your personal situation
-Save/Load Configurations: Save your analysis parameters to revisit later
-Smart Recommendations: Get personalized advice based on your risk tolerance and goals
+- **Comprehensive Analysis**: Compare all three strategies with detailed metrics
+- **Monte Carlo Simulations**: Generate bull, bear, and base case scenarios based on hundreds of simulations
+- **Liquidation Risk Analysis**: Monitor when BTC price changes might trigger liquidation events
+- **Interactive Visualizations**: Explore dynamic charts showing performance, risk profiles, and time-series projections
+- **Customizable Parameters**: Adjust all inputs to match your personal situation
+- **Save/Load Configurations**: Save your analysis parameters to revisit later
+- **Smart Recommendations**: Get personalized advice based on your risk tolerance and goals
 
 📋 Background
 This application implements mathematical models for three distinct strategies that Bitcoin holders can use when considering real estate purchases:
