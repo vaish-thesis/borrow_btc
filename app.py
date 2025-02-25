@@ -769,62 +769,98 @@ def main():
         with col1:
             st.subheader("Bitcoin Parameters")
             initial_btc = st.number_input("Initial BTC Holdings", 
-                                         min_value=0.1, max_value=100.0, value=1.0, step=0.1)
+                                        min_value=None, value=1.0, step=None,
+                                        placeholder="1.0")
             
-            current_btc_price = st.number_input("Current BTC Price ($)", 
-                                         min_value=1000, max_value=1000000, value=50000, step=1000,
-                                         help="The current market price of Bitcoin at the time of analysis")
+            current_btc_price = st.text_input("Current BTC Price ($) (default: 50000)", 
+                                            value="",
+                                            placeholder="50000")
+            current_btc_price = float(current_btc_price) if current_btc_price else 50000
             
-            btc_purchase_price = st.number_input("BTC Purchase Price ($)", 
-                                           min_value=1000, max_value=1000000, value=20000, step=1000,
-                                           help="The price at which you originally acquired your Bitcoin (used for tax calculations)")
+            btc_purchase_price = st.text_input("BTC Purchase Price ($) (default: 20000)", 
+                                            value="",
+                                            placeholder="20000",
+                                            help="The price at which you originally acquired your Bitcoin (used for tax calculations)")
+            btc_purchase_price = float(btc_purchase_price) if btc_purchase_price else 20000
             
-            btc_appreciation_rate = st.slider("BTC Annual Appreciation (%)", 
-                                           min_value=-20.0, max_value=100.0, value=20.0, step=1.0) / 100
+            btc_appreciation_rate_str = st.text_input("BTC Annual Appreciation (%) (default: 20.0)", 
+                                                    value="",
+                                                    placeholder="20.0")
+            btc_appreciation_rate = float(btc_appreciation_rate_str) / 100 if btc_appreciation_rate_str else 0.20
             
-            btc_volatility = st.slider("BTC Volatility", 
-                                     min_value=0.1, max_value=2.0, value=0.6, step=0.1)
+            btc_volatility_str = st.text_input("BTC Volatility (default: 0.6)", 
+                                            value="",
+                                            placeholder="0.6")
+            btc_volatility = float(btc_volatility_str) if btc_volatility_str else 0.6
             
-            btc_selling_fee = st.slider("BTC Selling Fee (%)", 
-                                     min_value=0.0, max_value=10.0, value=1.0, step=0.1) / 100
+            btc_selling_fee_str = st.text_input("BTC Selling Fee (%) (default: 1.0)", 
+                                            value="",
+                                            placeholder="1.0")
+            btc_selling_fee = float(btc_selling_fee_str) / 100 if btc_selling_fee_str else 0.01
         
         # House Parameters
         with col2:
             st.subheader("House Parameters")
-            initial_house_price = st.number_input("Initial House Price ($)", 
-                                               min_value=50000, max_value=10000000, value=500000, step=10000)
+            initial_house_price_str = st.text_input("Initial House Price ($) (default: 500000)", 
+                                                value="",
+                                                placeholder="500000")
+            initial_house_price = float(initial_house_price_str) if initial_house_price_str else 500000
             
-            house_appreciation_rate = st.slider("House Appreciation Rate (%)", 
-                                             min_value=-5.0, max_value=20.0, value=5.0, step=0.1) / 100
+            house_appreciation_rate_str = st.text_input("House Appreciation Rate (%) (default: 5.0)", 
+                                                    value="",
+                                                    placeholder="5.0")
+            house_appreciation_rate = float(house_appreciation_rate_str) / 100 if house_appreciation_rate_str else 0.05
             
-            house_purchase_fee = st.slider("House Purchase Fee (%)", 
-                                        min_value=0.0, max_value=10.0, value=2.0, step=0.1) / 100
+            house_purchase_fee_str = st.text_input("House Purchase Fee (%) (default: 2.0)", 
+                                                value="",
+                                                placeholder="2.0")
+            house_purchase_fee = float(house_purchase_fee_str) / 100 if house_purchase_fee_str else 0.02
             
-            annual_house_cost = st.slider("Annual House Costs (%)", 
-                                       min_value=0.0, max_value=10.0, value=2.0, step=0.1) / 100
+            annual_house_cost_str = st.text_input("Annual House Costs (%) (default: 2.0)", 
+                                                value="",
+                                                placeholder="2.0")
+            annual_house_cost = float(annual_house_cost_str) / 100 if annual_house_cost_str else 0.02
         
         # Financial Parameters
         st.subheader("Financial Parameters")
         col3, col4 = st.columns(2)
         
         with col3:
-            capital_gains_tax = st.slider("Capital Gains Tax (%)", 
-                                       min_value=0.0, max_value=50.0, value=20.0, step=1.0) / 100
+            capital_gains_tax_str = st.text_input("Capital Gains Tax (%) (default: 20.0)", 
+                                                value="",
+                                                placeholder="20.0")
+            capital_gains_tax = float(capital_gains_tax_str) / 100 if capital_gains_tax_str else 0.20
             
-            loan_to_value_ratio = st.slider("Loan-to-Value Ratio (%)", 
-                                         min_value=10.0, max_value=90.0, value=40.0, step=1.0) / 100
+            loan_to_value_ratio_str = st.text_input("Loan-to-Value Ratio (%) (default: 40.0)", 
+                                                value="",
+                                                placeholder="40.0")
+            loan_to_value_ratio = float(loan_to_value_ratio_str) / 100 if loan_to_value_ratio_str else 0.40
         
         with col4:
-            mortgage_rate = st.slider("Mortgage Rate (%)", 
-                                    min_value=1.0, max_value=15.0, value=5.0, step=0.1) / 100
+            mortgage_rate_str = st.text_input("Mortgage Rate (%) (default: 5.0)", 
+                                            value="",
+                                            placeholder="5.0")
+            mortgage_rate = float(mortgage_rate_str) / 100 if mortgage_rate_str else 0.05
             
-            inflation_rate = st.slider("Inflation Rate (%)", 
-                                     min_value=0.0, max_value=20.0, value=3.0, step=0.1) / 100
+            inflation_rate_str = st.text_input("Inflation Rate (%) (default: 3.0)", 
+                                            value="",
+                                            placeholder="3.0")
+            inflation_rate = float(inflation_rate_str) / 100 if inflation_rate_str else 0.03
         
         # Time Parameters
         st.subheader("Time Parameters")
-        time_horizon = st.slider("Time Horizon (Years)", 
-                               min_value=1, max_value=30, value=10, step=1)
+        time_horizon_str = st.text_input("Time Horizon (Years) (default: 10)", 
+                                        value="",
+                                        placeholder="10")
+        time_horizon = int(float(time_horizon_str)) if time_horizon_str else 10
+        
+        # Add a note about Bitcoin's historical appreciation
+        st.info("""
+        **Note on Bitcoin Annual Appreciation:** Historically, Bitcoin has seen highly variable annual returns. 
+        While past performance averaged around 100% annual growth over its first decade (2010-2020), more recent 
+        expectations tend toward more moderate long-term appreciation rates of 20-30% annually. Adjust based on 
+        your outlook.
+        """)
         
         # Save/Load inputs
         st.subheader("Save/Load Configuration")
