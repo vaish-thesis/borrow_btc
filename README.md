@@ -6,7 +6,7 @@ An interactive web application that helps you analyze and compare three strategi
 
 The application performs detailed financial modeling, Monte Carlo simulations, and provides visualizations to help you make data-driven decisions based on your unique circumstances.
 
-🌟 Features
+#🌟 Features
 
 - **Comprehensive Analysis**: Compare all three strategies with detailed metrics
 - **Monte Carlo Simulations**: Generate bull, bear, and base case scenarios based on hundreds of simulations
@@ -16,7 +16,8 @@ The application performs detailed financial modeling, Monte Carlo simulations, a
 - **Save/Load Configurations**: Save your analysis parameters to revisit later
 - **Smart Recommendations**: Get personalized advice based on your risk tolerance and goals
 
-📋 Background
+#📋 Background
+
 This application implements mathematical models for three distinct strategies that Bitcoin holders can use when considering real estate purchases:
 Strategy A: Sell BTC to Buy House
 The most straightforward approach - convert your Bitcoin holdings to fiat currency and use the proceeds to purchase a house. This approach removes exposure to Bitcoin price volatility but may have significant tax implications.
