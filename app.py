@@ -932,7 +932,7 @@ def main():
                 st.session_state.simulations = simulations
                 
                 # Switch to results tab
-                st.experimental_rerun()
+                st.rerun()
 
     with tab2:
         if 'scenario_a' in st.session_state:
