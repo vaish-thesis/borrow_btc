@@ -1,10 +1,11 @@
 An interactive web application that helps you analyze and compare three strategies for using Bitcoin to purchase real estate:
 
-Sell BTC to Buy House: Directly convert Bitcoin to fiat to purchase a house
-Borrow Against BTC: Use Bitcoin as collateral for a loan to buy a house
-BTC as Secondary Collateral: Apply Bitcoin as supplementary collateral in a self-paying mortgage structure
+1. Sell BTC to Buy House: Directly convert Bitcoin to fiat to purchase a house
+2. Borrow Against BTC: Use Bitcoin as collateral for a loan to buy a house
+3. BTC as Secondary Collateral: Apply Bitcoin as supplementary collateral in a self-paying mortgage structure
 
 The application performs detailed financial modeling, Monte Carlo simulations, and provides visualizations to help you make data-driven decisions based on your unique circumstances.
+
 🌟 Features
 
 Comprehensive Analysis: Compare all three strategies with detailed metrics
