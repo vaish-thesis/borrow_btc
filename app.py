@@ -22,7 +22,7 @@ class BTCHousingModel:
     Model for comparing 3 scenarios of using Bitcoin for house purchases:
     A) Sell BTC to buy house
     B) Borrow against BTC to buy house
-    C) Use BTC as secondary collateral
+    C) Self Paying Mortgage via BTC appreciation
     """
     
     def __init__(self, 
@@ -197,7 +197,7 @@ class BTCHousingModel:
     
     def scenario_c_btc_collateral(self):
         """
-        Scenario C: BTC as Secondary Collateral (Self-paying Mortgage)
+        Scenario C: Self Paying Mortgage via BTC Appreciation
         """
         # Initial loan parameters
         loan_amount = self.H0 * (1 + self.F_House)
@@ -271,7 +271,7 @@ class BTCHousingModel:
         net_value = final_house_value + final_btc_value - final_debt
         
         return {
-            "scenario": "C - BTC as Secondary Collateral",
+            "scenario": "C - Self Paying Mortgage via BTC Appreciation",
             "initial_loan": loan_amount,
             "final_house_value": final_house_value,
             "final_btc_value": final_btc_value,
@@ -706,7 +706,7 @@ def get_recommendation(scenario_a, scenario_b, scenario_c, simulations):
     scenarios = {
         "A": {"name": "Sell BTC to Buy House", "base_case": simulations["Scenario A"]["Base Case"]},
         "B": {"name": "Borrow Against BTC", "base_case": simulations["Scenario B"]["Base Case"]},
-        "C": {"name": "BTC as Secondary Collateral", "base_case": simulations["Scenario C"]["Base Case"]}
+        "C": {"name": "Self Paying Mortgage via BTC Appreciation", "base_case": simulations["Scenario C"]["Base Case"]}
     }
     
     best_scenario = max(scenarios.items(), key=lambda x: x[1]["base_case"])[0]
@@ -753,7 +753,7 @@ def main():
     Compare three strategies for using Bitcoin to purchase a house:
     - **Scenario A**: Sell BTC to buy a house
     - **Scenario B**: Borrow against BTC to buy a house
-    - **Scenario C**: Use BTC as secondary collateral
+    - **Scenario C**: Self Paying Mortgage via BTC Appreciation
     """)
     
     # Create tabs
