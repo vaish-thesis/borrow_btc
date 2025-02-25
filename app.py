@@ -27,8 +27,8 @@ class BTCHousingModel:
     
     def __init__(self, 
                  initial_btc,              # B₀: Initial BTC holdings
-                 initial_btc_price,        # P₀: BTC price at time t=0
-                 btc_basis_price,          # Price at which BTC was acquired (for tax purposes)
+                 current_btc_price,        # P₀: Current market price of BTC at time of analysis
+                 btc_purchase_price,       # Price at which BTC was originally purchased (for tax calculations)
                  btc_appreciation_rate,    # rₐ: BTC annual appreciation rate
                  initial_house_price,      # H₀: Initial house price (USD)
                  house_appreciation_rate,  # rₕ: Rate of house appreciation
@@ -45,8 +45,8 @@ class BTCHousingModel:
         
         # Store parameters
         self.B0 = initial_btc
-        self.P0 = initial_btc_price
-        self.P_basis = btc_basis_price
+        self.P0 = current_btc_price
+        self.P_basis = btc_purchase_price
         self.rb = btc_appreciation_rate
         self.H0 = initial_house_price
         self.rh = house_appreciation_rate
@@ -307,8 +307,8 @@ class BTCHousingModel:
             # Create temporary model with these rates
             temp_model = BTCHousingModel(
                 initial_btc=self.B0,
-                initial_btc_price=self.P0,
-                btc_basis_price=self.P_basis,
+                current_btc_price=self.P0,
+                btc_purchase_price=self.P_basis,
                 btc_appreciation_rate=btc_rate,
                 initial_house_price=self.H0,
                 house_appreciation_rate=house_rate,
@@ -381,8 +381,8 @@ def run_analysis(inputs):
     # Create model with inputs
     model = BTCHousingModel(
         initial_btc=inputs["initial_btc"],
-        initial_btc_price=inputs["initial_btc_price"],
-        btc_basis_price=inputs["btc_basis_price"],
+        current_btc_price=inputs["current_btc_price"],
+        btc_purchase_price=inputs["btc_purchase_price"],
         btc_appreciation_rate=inputs["btc_appreciation_rate"],
         initial_house_price=inputs["initial_house_price"],
         house_appreciation_rate=inputs["house_appreciation_rate"],
@@ -771,11 +771,13 @@ def main():
             initial_btc = st.number_input("Initial BTC Holdings", 
                                          min_value=0.1, max_value=100.0, value=1.0, step=0.1)
             
-            initial_btc_price = st.number_input("Current BTC Price ($)", 
-                                             min_value=1000, max_value=1000000, value=50000, step=1000)
+            current_btc_price = st.number_input("Current BTC Price ($)", 
+                                         min_value=1000, max_value=1000000, value=50000, step=1000,
+                                         help="The current market price of Bitcoin at the time of analysis")
             
-            btc_basis_price = st.number_input("BTC Basis Price ($)", 
-                                           min_value=1000, max_value=1000000, value=20000, step=1000)
+            btc_purchase_price = st.number_input("BTC Purchase Price ($)", 
+                                           min_value=1000, max_value=1000000, value=20000, step=1000,
+                                           help="The price at which you originally acquired your Bitcoin (used for tax calculations)")
             
             btc_appreciation_rate = st.slider("BTC Annual Appreciation (%)", 
                                            min_value=-20.0, max_value=100.0, value=20.0, step=1.0) / 100
@@ -832,8 +834,8 @@ def main():
             if st.button("Save Current Inputs"):
                 inputs = {
                     "initial_btc": initial_btc,
-                    "initial_btc_price": initial_btc_price,
-                    "btc_basis_price": btc_basis_price,
+                    "current_btc_price": current_btc_price,
+                    "btc_purchase_price": btc_purchase_price,
                     "btc_appreciation_rate": btc_appreciation_rate,
                     "initial_house_price": initial_house_price,
                     "house_appreciation_rate": house_appreciation_rate,
@@ -867,8 +869,8 @@ def main():
                 # Get input values
                 inputs = {
                     "initial_btc": initial_btc,
-                    "initial_btc_price": initial_btc_price,
-                    "btc_basis_price": btc_basis_price,
+                    "current_btc_price": current_btc_price,
+                    "btc_purchase_price": btc_purchase_price,
                     "btc_appreciation_rate": btc_appreciation_rate,
                     "initial_house_price": initial_house_price,
                     "house_appreciation_rate": house_appreciation_rate,
