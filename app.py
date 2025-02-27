@@ -689,11 +689,16 @@ def display_scenario_metrics(scenario, simulation_data, col):
             st.write(f"**Final House Value:** {format_currency(scenario['final_house_value'])}")
         
         if scenario["scenario"].startswith("A"):
-            st.write(f"**Final BTC Value (if held):** {format_currency(scenario['final_btc_value_if_held'])}")
-            st.write(f"**Net Proceeds After Tax:** {format_currency(scenario['net_proceeds_after_tax'])}")
-            st.write(f"**House Cost:** {format_currency(scenario['house_cost'])}")
-            st.write(f"**Remaining Cash:** {format_currency(scenario['remaining_cash'])}")
-            st.write(f"**Opportunity Cost:** {format_currency(scenario['opportunity_cost'])}")
+            if "final_btc_value_if_held" in scenario:
+                st.write(f"**Final BTC Value (if held):** {format_currency(scenario['final_btc_value_if_held'])}")
+            if "net_proceeds_after_tax" in scenario:
+                st.write(f"**Net Proceeds After Tax:** {format_currency(scenario['net_proceeds_after_tax'])}")
+            if "house_cost" in scenario:
+                st.write(f"**House Cost:** {format_currency(scenario['house_cost'])}")
+            if "remaining_cash" in scenario:
+                st.write(f"**Remaining Cash:** {format_currency(scenario['remaining_cash'])}")
+            if "opportunity_cost" in scenario:
+                st.write(f"**Opportunity Cost:** {format_currency(scenario['opportunity_cost'])}")
         else:
             if "final_btc_value" in scenario:
                 st.write(f"**Final BTC Value:** {format_currency(scenario['final_btc_value'])}")
@@ -704,7 +709,7 @@ def display_scenario_metrics(scenario, simulation_data, col):
             st.write(f"**Liquidation Occurred:** {'Yes' if scenario['liquidation_occurred'] else 'No'}")
             if "liquidation_probability" in scenario:
                 st.write(f"**Liquidation Probability:** {format_percent(scenario['liquidation_probability'])}")
-            if scenario["liquidation_occurred"] and scenario["liquidation_time"] is not None:
+            if scenario["liquidation_occurred"] and "liquidation_time" in scenario and scenario["liquidation_time"] is not None:
                 st.write(f"**Liquidation Time:** Year {scenario['liquidation_time']:.1f}")
         
         if "debt_paid_off" in scenario:
@@ -713,12 +718,16 @@ def display_scenario_metrics(scenario, simulation_data, col):
                 st.write(f"**Debt Payoff Probability:** {format_percent(scenario['debt_payoff_probability'])}")
         
         if scenario["scenario"].startswith("B"):
-            st.write(f"**Loan Amount:** {format_currency(scenario['loan_amount'])}")
-            st.write(f"**Loan with Interest:** {format_currency(scenario['loan_with_interest'])}")
+            if "loan_amount" in scenario:
+                st.write(f"**Loan Amount:** {format_currency(scenario['loan_amount'])}")
+            if "loan_with_interest" in scenario:
+                st.write(f"**Loan with Interest:** {format_currency(scenario['loan_with_interest'])}")
         
         if scenario["scenario"].startswith("C"):
-            st.write(f"**Initial Loan:** {format_currency(scenario['initial_loan'])}")
-            st.write(f"**Final Debt:** {format_currency(scenario['final_debt'])}")
+            if "initial_loan" in scenario:
+                st.write(f"**Initial Loan:** {format_currency(scenario['initial_loan'])}")
+            if "final_debt" in scenario:
+                st.write(f"**Final Debt:** {format_currency(scenario['final_debt'])}")
     
     # Display bull/bear/base cases
     with col.expander("Bull/Bear/Base Cases"):
