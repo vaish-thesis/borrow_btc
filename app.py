@@ -22,158 +22,317 @@ class BTCHousingModel:
     Model for comparing 3 scenarios of using Bitcoin for house purchases:
     A) Sell BTC to buy house
     B) Borrow against BTC to buy house
-    C) Self Paying Mortgage via BTC appreciation
+    C) Use BTC as secondary collateral
+    
+    This model uses Geometric Brownian Motion (GBM) to simulate Bitcoin price paths.
     """
     
     def __init__(self, 
                  initial_btc,              # B₀: Initial BTC holdings
-                 current_btc_price,        # P₀: Current market price of BTC at time of analysis
-                 btc_purchase_price,       # Price at which BTC was originally purchased (for tax calculations)
-                 btc_appreciation_rate,    # rₐ: BTC annual appreciation rate
+                 initial_btc_price,        # P₀: BTC price at time t=0
+                 btc_basis_price,          # Price at which BTC was acquired (for tax purposes)
+                 btc_appreciation_rate,    # μ: BTC annual expected return (drift)
                  initial_house_price,      # H₀: Initial house price (USD)
                  house_appreciation_rate,  # rₕ: Rate of house appreciation
                  capital_gains_tax,        # τ: Capital gains tax rate
                  loan_to_value_ratio,      # LTV: Loan to value ratio
                  mortgage_rate,            # iₛₜ: Mortgage rate
                  time_horizon,             # T: Time horizon (years)
-                 btc_volatility,           # σₐ: BTC volatility
+                 btc_volatility,           # σ: BTC volatility (annual)
                  inflation_rate,           # π: Inflation rate
                  btc_selling_fee,          # F_BTC: Fee for selling BTC (%)
                  house_purchase_fee,       # F_House: House purchase fee (%)
-                 annual_house_cost         # f_House: Annual recurring house cost (%)
+                 annual_house_cost,        # f_House: Annual recurring house cost (%)
+                 num_simulations=500,      # Number of Monte Carlo simulations
+                 time_steps_per_year=12    # Time steps per year (monthly)
                 ):
         
         # Store parameters
         self.B0 = initial_btc
-        self.P0 = current_btc_price
-        self.P_basis = btc_purchase_price
-        self.rb = btc_appreciation_rate
+        self.P0 = initial_btc_price
+        self.P_basis = btc_basis_price
+        self.mu = btc_appreciation_rate    # Using μ as drift in GBM
         self.H0 = initial_house_price
         self.rh = house_appreciation_rate
         self.tau = capital_gains_tax
         self.LTV = loan_to_value_ratio
         self.i_st = mortgage_rate
         self.T = time_horizon
-        self.sigma_b = btc_volatility
+        self.sigma = btc_volatility        # Using σ directly for GBM
         self.pi = inflation_rate
         self.F_BTC = btc_selling_fee
         self.F_House = house_purchase_fee
         self.f_House = annual_house_cost
+        self.num_simulations = num_simulations
+        self.time_steps_per_year = time_steps_per_year
         
         # Derived values
         self.initial_btc_value = self.B0 * self.P0
+        self.total_steps = int(self.T * self.time_steps_per_year)
+        self.dt = 1.0 / self.time_steps_per_year
         
+        # Pre-generate all Bitcoin price paths for consistency across scenarios
+        self.btc_price_paths = self._generate_btc_price_paths()
+        
+        # Pre-generate house price paths (less volatile but still stochastic)
+        self.house_price_paths = self._generate_house_price_paths()
+    
+    def _generate_btc_price_paths(self):
+        """
+        Generate Bitcoin price paths using Geometric Brownian Motion (GBM)
+        dS = μS dt + σS dW
+        
+        Returns a 2D numpy array of shape (num_simulations, total_steps+1)
+        """
+        # Initialize array for price paths
+        price_paths = np.zeros((self.num_simulations, self.total_steps + 1))
+        
+        # Set initial price for all paths
+        price_paths[:, 0] = self.P0
+        
+        # Generate random normal samples for Brownian motion
+        # Using antithetic variates for variance reduction
+        half_sims = self.num_simulations // 2
+        Z = np.random.normal(0, 1, (half_sims, self.total_steps))
+        Z_antithetic = -Z  # Antithetic pairs
+        Z = np.vstack((Z, Z_antithetic))
+        
+        # Ensure we have exactly num_simulations paths
+        if Z.shape[0] < self.num_simulations:
+            extra = np.random.normal(0, 1, (self.num_simulations - Z.shape[0], self.total_steps))
+            Z = np.vstack((Z, extra))
+        
+        # Drift and volatility terms for GBM
+        drift = (self.mu - 0.5 * self.sigma**2) * self.dt
+        diffusion = self.sigma * np.sqrt(self.dt)
+        
+        # Generate price paths
+        for t in range(1, self.total_steps + 1):
+            price_paths[:, t] = price_paths[:, t-1] * np.exp(drift + diffusion * Z[:, (t-1) % Z.shape[1]])
+        
+        return price_paths
+    
+    def _generate_house_price_paths(self):
+        """
+        Generate house price paths using GBM with lower volatility
+        
+        Returns a 2D numpy array of shape (num_simulations, total_steps+1)
+        """
+        # House prices are less volatile than BTC
+        house_volatility = self.rh * 0.3  # 30% of the appreciation rate
+        
+        # Initialize array for price paths
+        price_paths = np.zeros((self.num_simulations, self.total_steps + 1))
+        
+        # Set initial price for all paths
+        price_paths[:, 0] = self.H0
+        
+        # Generate random normal samples
+        Z = np.random.normal(0, 1, (self.num_simulations, self.total_steps))
+        
+        # Drift and volatility terms
+        drift = (self.rh - 0.5 * house_volatility**2) * self.dt
+        diffusion = house_volatility * np.sqrt(self.dt)
+        
+        # Generate price paths
+        for t in range(1, self.total_steps + 1):
+            price_paths[:, t] = price_paths[:, t-1] * np.exp(drift + diffusion * Z[:, t-1])
+        
+        return price_paths
+    
+    def _get_yearly_indices(self):
+        """Return indices for yearly points in the simulation"""
+        steps_per_year = self.time_steps_per_year
+        return [i * steps_per_year for i in range(self.T + 1)]
+    
     def scenario_a_sell_btc(self):
         """
         Scenario A: Selling BTC to buy a House
+        
+        Run Monte Carlo simulations and return aggregated results
         """
-        # 1. Selling BTC at time 0
-        gross_amount = self.B0 * self.P0
-        btc_selling_fee = gross_amount * self.F_BTC
-        capital_gains = self.B0 * (self.P0 - self.P_basis)
-        capital_gains_tax = capital_gains * self.tau
-        net_proceeds = gross_amount - btc_selling_fee - capital_gains_tax
+        # Array to store results from each simulation
+        net_values = np.zeros(self.num_simulations)
+        btc_values_if_held = np.zeros(self.num_simulations)
         
-        # 2. Buy House
-        house_cost = self.H0 * (1 + self.F_House)
+        # Run simulations
+        for sim in range(self.num_simulations):
+            # Extract this simulation's price paths
+            btc_prices = self.btc_price_paths[sim]
+            house_prices = self.house_price_paths[sim]
+            
+            # 1. Selling BTC at time 0
+            initial_btc_value = self.B0 * self.P0  # Same for all simulations
+            btc_selling_fee = initial_btc_value * self.F_BTC
+            capital_gains = self.B0 * (self.P0 - self.P_basis)
+            capital_gains_tax = capital_gains * self.tau
+            net_proceeds = initial_btc_value - btc_selling_fee - capital_gains_tax
+            
+            # 2. Buy House
+            house_cost = self.H0 * (1 + self.F_House)
+            
+            # Check if enough money to buy house
+            can_afford = net_proceeds >= house_cost
+            remaining_cash = net_proceeds - house_cost if can_afford else 0
+            
+            if not can_afford:
+                # If can't afford house, just hold BTC instead
+                net_values[sim] = self.B0 * btc_prices[-1]
+                btc_values_if_held[sim] = self.B0 * btc_prices[-1]
+                continue
+            
+            # 3. Holding cost over time (Present Value)
+            yearly_indices = self._get_yearly_indices()
+            holding_costs_pv = 0
+            
+            for i, idx in enumerate(yearly_indices):
+                if i == 0:  # Skip the initial year
+                    continue
+                house_value_t = house_prices[idx]
+                yearly_cost = self.f_House * house_value_t
+                # Discount to present value
+                holding_costs_pv += yearly_cost / ((1 + self.pi) ** i)
+            
+            # 4. Final values at time T
+            final_house_value = house_prices[-1]
+            final_btc_value_if_held = self.B0 * btc_prices[-1]
+            
+            # 5. Net Gain
+            net_value = final_house_value - house_cost - holding_costs_pv + remaining_cash
+            
+            # Store results
+            net_values[sim] = net_value
+            btc_values_if_held[sim] = final_btc_value_if_held
         
-        # Check if enough money to buy house
-        can_afford = net_proceeds >= house_cost
-        remaining_cash = net_proceeds - house_cost if can_afford else 0
+        # Compute percentiles and metrics
+        percentiles = [10, 25, 50, 75, 90]
+        net_value_percentiles = np.percentile(net_values, percentiles)
+        btc_held_percentiles = np.percentile(btc_values_if_held, percentiles)
         
-        # 3. Holding cost over time (Present Value)
-        holding_costs_pv = 0
-        for t in range(self.T + 1):
-            house_value_t = self.H0 * (1 + self.rh) ** t
-            yearly_cost = self.f_House * house_value_t
-            # Discount to present value
-            holding_costs_pv += yearly_cost / ((1 + self.pi) ** t)
+        # Get median value for detailed output
+        median_sim_idx = np.argsort(net_values)[len(net_values)//2]
+        median_house_value = self.house_price_paths[median_sim_idx, -1]
         
-        # 4. Value at Time T
-        final_house_value = self.H0 * (1 + self.rh) ** self.T
-        
-        # What if we kept the BTC instead?
-        final_btc_value = self.B0 * self.P0 * (1 + self.rb) ** self.T
-        
-        # 5. Net Gain
-        net_value = final_house_value - house_cost - holding_costs_pv + remaining_cash
-        opportunity_cost = final_btc_value - gross_amount
+        # Opportunity cost - what if we kept the BTC instead?
+        opportunity_cost = btc_values_if_held[median_sim_idx] - initial_btc_value
         
         return {
             "scenario": "A - Sell BTC to Buy House",
-            "can_afford_house": can_afford,
-            "initial_btc_value": gross_amount,
+            "can_afford_house": net_proceeds >= house_cost,
+            "initial_btc_value": initial_btc_value,
             "net_proceeds_after_tax": net_proceeds,
             "house_cost": house_cost,
             "remaining_cash": remaining_cash,
-            "holding_costs_pv": holding_costs_pv,
-            "final_house_value": final_house_value,
-            "final_btc_value_if_held": final_btc_value,
-            "net_value": net_value,
+            "holding_costs_pv": holding_costs_pv,  # Using median sim for this
+            "final_house_value": median_house_value,
+            "final_btc_value_if_held": btc_values_if_held[median_sim_idx],
+            "net_value": net_values[median_sim_idx],
             "opportunity_cost": opportunity_cost,
-            "total_return": (net_value / house_cost) * 100 if house_cost > 0 else 0,
-            "btc_return_if_held": ((final_btc_value / gross_amount) - 1) * 100
+            "total_return": (net_values[median_sim_idx] / house_cost) * 100 if house_cost > 0 else 0,
+            "btc_return_if_held": ((btc_values_if_held[median_sim_idx] / initial_btc_value) - 1) * 100,
+            # Distribution stats
+            "net_value_percentiles": dict(zip(
+                ["p10", "p25", "p50", "p75", "p90"],
+                net_value_percentiles
+            )),
+            "btc_held_percentiles": dict(zip(
+                ["p10", "p25", "p50", "p75", "p90"],
+                btc_held_percentiles
+            )),
+            "all_net_values": net_values.tolist(),
+            "all_btc_values": btc_values_if_held.tolist()
         }
     
     def scenario_b_borrow_against_btc(self):
         """
         Scenario B: Borrowing Against BTC to buy a house
+        
+        Run Monte Carlo simulations and return aggregated results
         """
-        # 1. Loan amount and House cost
+        # Arrays to store results
+        net_values = np.zeros(self.num_simulations)
+        liquidation_occurred = np.zeros(self.num_simulations, dtype=bool)
+        liquidation_times = np.full(self.num_simulations, np.nan)
+        
+        # Initial loan parameters (same for all simulations)
         loan_amount = self.LTV * self.B0 * self.P0
         house_cost = self.H0 * (1 + self.F_House)
-        
-        # Check if loan covers house cost
         can_afford = loan_amount >= house_cost
         remaining_cash = loan_amount - house_cost if can_afford else 0
         
-        # 2. BTC expected value over time
-        # Using deterministic growth formula for median path
-        final_btc_price = self.P0 * (1 + self.rb) ** self.T
-        final_btc_value = self.B0 * final_btc_price
+        # Skip simulation if loan doesn't cover house cost
+        if not can_afford:
+            return {
+                "scenario": "B - Borrow Against BTC",
+                "can_afford_house": False,
+                "loan_amount": loan_amount,
+                "house_cost": house_cost,
+                "net_value": 0,
+                "total_return": 0
+            }
         
-        # 3. Liquidation threshold analysis
-        loan_with_interest = loan_amount * (1 + self.i_st) ** self.T
-        liquidation_threshold = 1.25 * self.LTV  # Typically liquidation at 125% of LTV
+        # Liquidation threshold (typically 125% of LTV)
+        liquidation_threshold = 1.25 * self.LTV
         
-        # Simulate BTC price path for liquidation analysis
-        time_points = np.linspace(0, self.T, 12 * self.T + 1)  # Monthly checks
-        liquidation_occurred = False
-        liquidation_time = None
-        
-        # Track values over time for charts
-        btc_value_history = []
-        loan_value_history = []
-        ltv_history = []
-        
-        for t in time_points:
-            # Price at time t (median path)
-            price_t = self.P0 * (1 + self.rb) ** t
+        # Run simulations
+        for sim in range(self.num_simulations):
+            btc_prices = self.btc_price_paths[sim]
+            house_prices = self.house_price_paths[sim]
             
-            # Check for liquidation
-            loan_value_t = loan_amount * (1 + self.i_st) ** t
-            btc_value_t = self.B0 * price_t
-            current_ltv = loan_value_t / btc_value_t
+            # Track loan value over time
+            loan_values = np.zeros(self.total_steps + 1)
+            loan_values[0] = loan_amount
             
-            # Store values for charts
-            btc_value_history.append(btc_value_t)
-            loan_value_history.append(loan_value_t)
-            ltv_history.append(current_ltv * 100)  # Convert to percentage
+            # Compute loan growth with compound interest
+            for t in range(1, self.total_steps + 1):
+                loan_values[t] = loan_values[t-1] * (1 + self.i_st/self.time_steps_per_year)
             
-            if current_ltv > liquidation_threshold and not liquidation_occurred:
-                liquidation_occurred = True
-                liquidation_time = t
-                break
+            # Check for liquidation at each time step
+            btc_values = self.B0 * btc_prices
+            current_ltv = loan_values / btc_values
+            
+            # Find first liquidation point if any
+            liquidation_points = np.where(current_ltv > liquidation_threshold)[0]
+            
+            if len(liquidation_points) > 0:
+                liquidation_occurred[sim] = True
+                first_liquidation = liquidation_points[0]
+                liquidation_times[sim] = first_liquidation / self.time_steps_per_year
+                
+                # In case of liquidation, we lose the BTC but keep the house
+                final_btc_value = 0
+            else:
+                # No liquidation
+                final_btc_value = btc_values[-1]
+            
+            # Final values
+            final_house_value = house_prices[-1]
+            final_loan_value = loan_values[-1]
+            
+            # Net value calculation
+            net_values[sim] = final_house_value + final_btc_value - final_loan_value + remaining_cash
         
-        # 4. Future value calculation
-        final_house_value = self.H0 * (1 + self.rh) ** self.T
+        # Compute statistics
+        percentiles = [10, 25, 50, 75, 90]
+        net_value_percentiles = np.percentile(net_values, percentiles)
         
-        if liquidation_occurred:
-            # If liquidation happened, we lose the BTC but keep the house
-            net_value = final_house_value - loan_with_interest + remaining_cash
-        else:
-            # No liquidation
-            net_value = final_house_value + final_btc_value - loan_with_interest + remaining_cash
+        # Get median simulation for detailed output
+        median_sim_idx = np.argsort(net_values)[len(net_values)//2]
+        median_btc_prices = self.btc_price_paths[median_sim_idx]
+        median_btc_values = self.B0 * median_btc_prices
+        
+        median_loan_values = np.zeros(self.total_steps + 1)
+        median_loan_values[0] = loan_amount
+        for t in range(1, self.total_steps + 1):
+            median_loan_values[t] = median_loan_values[t-1] * (1 + self.i_st/self.time_steps_per_year)
+        
+        median_ltv = (median_loan_values / median_btc_values) * 100  # Convert to percentage
+        
+        # Time points for charts (in years)
+        time_points = np.linspace(0, self.T, self.total_steps + 1)
+        
+        # Probability of liquidation
+        liquidation_probability = np.mean(liquidation_occurred) * 100
         
         return {
             "scenario": "B - Borrow Against BTC",
@@ -181,157 +340,262 @@ class BTCHousingModel:
             "loan_amount": loan_amount,
             "house_cost": house_cost,
             "remaining_cash": remaining_cash,
-            "loan_with_interest": loan_with_interest,
-            "final_btc_price": final_btc_price,
-            "final_btc_value": final_btc_value,
-            "final_house_value": final_house_value,
-            "liquidation_occurred": liquidation_occurred,
-            "liquidation_time": liquidation_time,
-            "net_value": net_value,
-            "total_return": (net_value / self.initial_btc_value) * 100,
-            "time_points": time_points,
-            "btc_value_history": btc_value_history,
-            "loan_value_history": loan_value_history,
-            "ltv_history": ltv_history
+            "loan_with_interest": median_loan_values[-1],
+            "final_btc_price": median_btc_prices[-1],
+            "final_btc_value": median_btc_values[-1] if not liquidation_occurred[median_sim_idx] else 0,
+            "final_house_value": self.house_price_paths[median_sim_idx, -1],
+            "liquidation_occurred": liquidation_occurred[median_sim_idx],
+            "liquidation_time": liquidation_times[median_sim_idx] if liquidation_occurred[median_sim_idx] else None,
+            "net_value": net_values[median_sim_idx],
+            "total_return": (net_values[median_sim_idx] / self.initial_btc_value) * 100,
+            "time_points": time_points.tolist(),
+            "btc_value_history": median_btc_values.tolist(),
+            "loan_value_history": median_loan_values.tolist(),
+            "ltv_history": median_ltv.tolist(),
+            # Additional statistics
+            "liquidation_probability": liquidation_probability,
+            "net_value_percentiles": dict(zip(
+                ["p10", "p25", "p50", "p75", "p90"],
+                net_value_percentiles
+            )),
+            "all_net_values": net_values.tolist()
         }
     
     def scenario_c_btc_collateral(self):
         """
-        Scenario C: Self Paying Mortgage via BTC Appreciation
+        Scenario C: BTC as Secondary Collateral (Self-paying Mortgage)
+        
+        Run Monte Carlo simulations and return aggregated results
         """
-        # Initial loan parameters
+        # Arrays to store results
+        net_values = np.zeros(self.num_simulations)
+        liquidation_occurred = np.zeros(self.num_simulations, dtype=bool)
+        liquidation_times = np.full(self.num_simulations, np.nan)
+        debt_paid_off = np.zeros(self.num_simulations, dtype=bool)
+        
+        # Initial loan parameters (same for all simulations)
         loan_amount = self.H0 * (1 + self.F_House)
-        debt_remaining = loan_amount
-        house_value = self.H0
         
-        # Track metrics over time
-        time_points = np.linspace(0, self.T, self.T + 1)  # Yearly checks
-        debt_history = [debt_remaining]
-        house_value_history = [house_value]
-        btc_value_history = [self.B0 * self.P0]
-        collateral_ratio_history = [(house_value + self.B0 * self.P0) / debt_remaining]
-        liquidation_occurred = False
-        liquidation_time = None
+        # For tracking median simulation
+        median_debt_history = None
+        median_house_value_history = None
+        median_btc_value_history = None
+        median_collateral_ratio_history = None
         
-        # Simulate over time (yearly steps)
-        for t in range(1, self.T + 1):
-            # Update house value
-            house_value = self.H0 * (1 + self.rh) ** t
-            house_value_history.append(house_value)
+        # Get yearly indices for tracking
+        yearly_indices = self._get_yearly_indices()
+        
+        # Run simulations
+        for sim in range(self.num_simulations):
+            btc_prices = self.btc_price_paths[sim]
+            house_prices = self.house_price_paths[sim]
             
-            # Update BTC value
-            btc_price_t = self.P0 * (1 + self.rb) ** t
-            btc_value_t = self.B0 * btc_price_t
-            btc_value_history.append(btc_value_t)
+            # Initialize tracking arrays for this simulation
+            debt_history = np.zeros(len(yearly_indices))
+            house_value_history = np.zeros(len(yearly_indices))
+            btc_value_history = np.zeros(len(yearly_indices))
+            collateral_ratio_history = np.zeros(len(yearly_indices))
+            
+            # Initial values
+            debt_remaining = loan_amount
+            debt_history[0] = debt_remaining
+            house_value_history[0] = house_prices[0]
+            btc_value_history[0] = self.B0 * btc_prices[0]
+            collateral_ratio_history[0] = (house_value_history[0] + btc_value_history[0]) / debt_remaining
+            
+            # Track liquidation
+            sim_liquidation_occurred = False
+            sim_liquidation_time = None
+            
+            # Simulate over yearly steps
+            for t in range(1, len(yearly_indices)):
+                idx = yearly_indices[t]
+                
+                # Update house and BTC values
+                house_value = house_prices[idx]
+                house_value_history[t] = house_value
+                
+                btc_value = self.B0 * btc_prices[idx]
+                btc_value_history[t] = btc_value
+                
+                # Calculate debt with interest
+                debt_with_interest = debt_remaining * (1 + self.i_st)
+                
+                # Check if BTC + house value can cover the debt
+                total_collateral = house_value + btc_value
+                required_collateral = debt_with_interest * 1.25  # 125% LTV requirement
+                
+                if total_collateral < required_collateral and not sim_liquidation_occurred:
+                    sim_liquidation_occurred = True
+                    sim_liquidation_time = t
+                    # In case of liquidation, we lose the BTC
+                    btc_value = 0
+                    btc_value_history[t:] = 0
+                    excess_value = 0
+                else:
+                    # Calculate excess collateral that can be used to pay down principal
+                    excess_value = max(0, total_collateral - required_collateral)
+                
+                # Apply excess to debt reduction
+                principal_reduction = min(excess_value, debt_with_interest)
+                debt_remaining = debt_with_interest - principal_reduction
+                debt_history[t] = debt_remaining
+                
+                # Calculate collateral ratio
+                if debt_remaining > 0:
+                    collateral_ratio = (house_value + btc_value) / debt_remaining
+                else:
+                    collateral_ratio = float('inf')  # No debt
+                    debt_paid_off[sim] = True
+                
+                collateral_ratio_history[t] = min(collateral_ratio, 10)  # Cap for visualization
+                
+                # If debt is fully paid, fill the rest with zeros
+                if debt_remaining <= 0:
+                    debt_remaining = 0
+                    debt_history[t:] = 0
+                    debt_paid_off[sim] = True
+                    break
+            
+            # Store liquidation results
+            liquidation_occurred[sim] = sim_liquidation_occurred
+            if sim_liquidation_time is not None:
+                liquidation_times[sim] = sim_liquidation_time
+            
+            # Calculate net value
+            final_house_value = house_prices[-1]
+            final_btc_value = self.B0 * btc_prices[-1] if not sim_liquidation_occurred else 0
+            final_debt = debt_remaining
+            
+            net_values[sim] = final_house_value + final_btc_value - final_debt
+        
+        # Compute statistics
+        percentiles = [10, 25, 50, 75, 90]
+        net_value_percentiles = np.percentile(net_values, percentiles)
+        
+        # Get median simulation for detailed output
+        median_sim_idx = np.argsort(net_values)[len(net_values)//2]
+        
+        # Re-run the median simulation to get detailed history
+        btc_prices = self.btc_price_paths[median_sim_idx]
+        house_prices = self.house_price_paths[median_sim_idx]
+        
+        # Initialize tracking arrays for median simulation
+        debt_history = np.zeros(len(yearly_indices))
+        house_value_history = np.zeros(len(yearly_indices))
+        btc_value_history = np.zeros(len(yearly_indices))
+        collateral_ratio_history = np.zeros(len(yearly_indices))
+        
+        # Initial values
+        debt_remaining = loan_amount
+        debt_history[0] = debt_remaining
+        house_value_history[0] = house_prices[0]
+        btc_value_history[0] = self.B0 * btc_prices[0]
+        collateral_ratio_history[0] = (house_value_history[0] + btc_value_history[0]) / debt_remaining
+        
+        # Track liquidation
+        median_liquidation_occurred = False
+        median_liquidation_time = None
+        
+        # Simulate over yearly steps for median simulation
+        for t in range(1, len(yearly_indices)):
+            idx = yearly_indices[t]
+            
+            # Update house and BTC values
+            house_value = house_prices[idx]
+            house_value_history[t] = house_value
+            
+            btc_value = self.B0 * btc_prices[idx]
+            btc_value_history[t] = btc_value
             
             # Calculate debt with interest
             debt_with_interest = debt_remaining * (1 + self.i_st)
             
             # Check if BTC + house value can cover the debt
-            total_collateral = house_value + btc_value_t
+            total_collateral = house_value + btc_value
             required_collateral = debt_with_interest * 1.25  # 125% LTV requirement
             
-            if total_collateral < required_collateral and not liquidation_occurred:
-                liquidation_occurred = True
-                liquidation_time = t
+            if total_collateral < required_collateral and not median_liquidation_occurred:
+                median_liquidation_occurred = True
+                median_liquidation_time = t
                 # In case of liquidation, we lose the BTC
+                btc_value = 0
+                btc_value_history[t:] = 0
                 excess_value = 0
             else:
                 # Calculate excess collateral that can be used to pay down principal
                 excess_value = max(0, total_collateral - required_collateral)
-                
+            
             # Apply excess to debt reduction
             principal_reduction = min(excess_value, debt_with_interest)
-            
-            # Update debt remaining
             debt_remaining = debt_with_interest - principal_reduction
-            debt_history.append(debt_remaining)
+            debt_history[t] = debt_remaining
             
             # Calculate collateral ratio
             if debt_remaining > 0:
-                collateral_ratio = (house_value + btc_value_t) / debt_remaining
+                collateral_ratio = (house_value + btc_value) / debt_remaining
             else:
                 collateral_ratio = float('inf')  # No debt
-            collateral_ratio_history.append(collateral_ratio)
             
-            # If debt is fully paid, break
+            collateral_ratio_history[t] = min(collateral_ratio, 10)  # Cap for visualization
+            
+            # If debt is fully paid, fill the rest with zeros
             if debt_remaining <= 0:
                 debt_remaining = 0
-                # Fill the rest of the history with zeros
-                for i in range(t+1, self.T + 1):
-                    debt_history.append(0)
+                debt_history[t:] = 0
                 break
         
-        # Final values
-        final_house_value = house_value_history[-1]
-        final_btc_value = btc_value_history[-1] if not liquidation_occurred else 0
-        final_debt = debt_history[-1]
+        # Time points for yearly charts
+        time_points = np.arange(self.T + 1)
         
-        # Net value calculation
-        net_value = final_house_value + final_btc_value - final_debt
+        # Probability of liquidation
+        liquidation_probability = np.mean(liquidation_occurred) * 100
+        
+        # Probability of debt payoff
+        debt_payoff_probability = np.mean(debt_paid_off) * 100
         
         return {
-            "scenario": "C - Self Paying Mortgage via BTC Appreciation",
+            "scenario": "C - BTC as Secondary Collateral",
             "initial_loan": loan_amount,
-            "final_house_value": final_house_value,
-            "final_btc_value": final_btc_value,
-            "final_debt": final_debt,
-            "liquidation_occurred": liquidation_occurred,
-            "liquidation_time": liquidation_time,
+            "final_house_value": house_prices[-1],
+            "final_btc_value": self.B0 * btc_prices[-1] if not median_liquidation_occurred else 0,
+            "final_debt": debt_remaining,
+            "liquidation_occurred": median_liquidation_occurred,
+            "liquidation_time": median_liquidation_time,
             "debt_paid_off": debt_remaining == 0,
-            "debt_history": debt_history,
-            "house_value_history": house_value_history,
-            "btc_value_history": btc_value_history,
-            "collateral_ratio_history": collateral_ratio_history,
-            "time_points": time_points,
-            "net_value": net_value,
-            "total_return": (net_value / self.initial_btc_value) * 100
+            "debt_history": debt_history.tolist(),
+            "house_value_history": house_value_history.tolist(),
+            "btc_value_history": btc_value_history.tolist(),
+            "collateral_ratio_history": collateral_ratio_history.tolist(),
+            "time_points": time_points.tolist(),
+            "net_value": net_values[median_sim_idx],
+            "total_return": (net_values[median_sim_idx] / self.initial_btc_value) * 100,
+            # Additional statistics
+            "liquidation_probability": liquidation_probability,
+            "debt_payoff_probability": debt_payoff_probability,
+            "net_value_percentiles": dict(zip(
+                ["p10", "p25", "p50", "p75", "p90"],
+                net_value_percentiles
+            )),
+            "all_net_values": net_values.tolist()
         }
     
-    def simulate_scenarios(self, num_simulations=100):
+    def simulate_scenarios(self):
         """
-        Run Monte Carlo simulations for all scenarios to generate bull/bear/base cases
-        """
-        # Store results for each scenario
-        scenario_a_results = []
-        scenario_b_results = []
-        scenario_c_results = []
+        Aggregate results from all three scenarios
         
-        # Run simulations
-        for _ in range(num_simulations):
-            # Generate random BTC and house appreciation rates
-            # This simulates bull/bear market conditions
-            btc_rate = np.random.normal(self.rb, self.sigma_b)
-            house_rate = np.random.normal(self.rh, self.rh * 0.2)  # 20% volatility of base rate
-            
-            # Create temporary model with these rates
-            temp_model = BTCHousingModel(
-                initial_btc=self.B0,
-                current_btc_price=self.P0,
-                btc_purchase_price=self.P_basis,
-                btc_appreciation_rate=btc_rate,
-                initial_house_price=self.H0,
-                house_appreciation_rate=house_rate,
-                capital_gains_tax=self.tau,
-                loan_to_value_ratio=self.LTV,
-                mortgage_rate=self.i_st,
-                time_horizon=self.T,
-                btc_volatility=self.sigma_b,
-                inflation_rate=self.pi,
-                btc_selling_fee=self.F_BTC,
-                house_purchase_fee=self.F_House,
-                annual_house_cost=self.f_House
-            )
-            
-            # Run the three scenarios
-            result_a = temp_model.scenario_a_sell_btc()
-            result_b = temp_model.scenario_b_borrow_against_btc()
-            result_c = temp_model.scenario_c_btc_collateral()
-            
-            # Store the net value results
-            scenario_a_results.append(result_a["net_value"])
-            scenario_b_results.append(result_b["net_value"])
-            scenario_c_results.append(result_c["net_value"])
+        Since we now use Monte Carlo in the core functions, this just calls
+        each scenario function and returns the results in the expected format.
+        """
+        # Run the three scenarios
+        scenario_a = self.scenario_a_sell_btc()
+        scenario_b = self.scenario_b_borrow_against_btc()
+        scenario_c = self.scenario_c_btc_collateral()
+        
+        # Extract net value arrays
+        scenario_a_results = np.array(scenario_a["all_net_values"])
+        scenario_b_results = np.array(scenario_b["all_net_values"]) if "all_net_values" in scenario_b else np.zeros(self.num_simulations)
+        scenario_c_results = np.array(scenario_c["all_net_values"])
         
         # Calculate percentiles for bull/bear/base cases
         percentiles = [10, 50, 90]  # 10% = bear, 50% = base, 90% = bull
@@ -345,19 +609,19 @@ class BTCHousingModel:
                 "Bear Case": scenario_a_cases[0],
                 "Base Case": scenario_a_cases[1],
                 "Bull Case": scenario_a_cases[2],
-                "All Results": scenario_a_results
+                "All Results": scenario_a_results.tolist()
             },
             "Scenario B": {
                 "Bear Case": scenario_b_cases[0],
                 "Base Case": scenario_b_cases[1],
                 "Bull Case": scenario_b_cases[2],
-                "All Results": scenario_b_results
+                "All Results": scenario_b_results.tolist()
             },
             "Scenario C": {
                 "Bear Case": scenario_c_cases[0],
                 "Base Case": scenario_c_cases[1],
                 "Bull Case": scenario_c_cases[2],
-                "All Results": scenario_c_results
+                "All Results": scenario_c_results.tolist()
             }
         }
 
@@ -381,8 +645,8 @@ def run_analysis(inputs):
     # Create model with inputs
     model = BTCHousingModel(
         initial_btc=inputs["initial_btc"],
-        current_btc_price=inputs["current_btc_price"],
-        btc_purchase_price=inputs["btc_purchase_price"],
+        initial_btc_price=inputs["initial_btc_price"],
+        btc_basis_price=inputs["btc_basis_price"],
         btc_appreciation_rate=inputs["btc_appreciation_rate"],
         initial_house_price=inputs["initial_house_price"],
         house_appreciation_rate=inputs["house_appreciation_rate"],
@@ -394,16 +658,17 @@ def run_analysis(inputs):
         inflation_rate=inputs["inflation_rate"],
         btc_selling_fee=inputs["btc_selling_fee"],
         house_purchase_fee=inputs["house_purchase_fee"],
-        annual_house_cost=inputs["annual_house_cost"]
+        annual_house_cost=inputs["annual_house_cost"],
+        num_simulations=inputs.get("num_simulations", 500)
     )
     
-    # Run scenarios
+    # Run scenarios - now fully based on Monte Carlo
     scenario_a = model.scenario_a_sell_btc()
     scenario_b = model.scenario_b_borrow_against_btc()
     scenario_c = model.scenario_c_btc_collateral()
     
-    # Run simulations
-    simulations = model.simulate_scenarios(num_simulations=500)
+    # Run simulations to get aggregated statistics
+    simulations = model.simulate_scenarios()
     
     return model, scenario_a, scenario_b, scenario_c, simulations
 
@@ -434,11 +699,15 @@ def display_scenario_metrics(scenario, simulation_data, col):
         
         if "liquidation_occurred" in scenario and scenario["scenario"] != "A - Sell BTC to Buy House":
             st.write(f"**Liquidation Occurred:** {'Yes' if scenario['liquidation_occurred'] else 'No'}")
+            if "liquidation_probability" in scenario:
+                st.write(f"**Liquidation Probability:** {format_percent(scenario['liquidation_probability'])}")
             if scenario["liquidation_occurred"] and scenario["liquidation_time"] is not None:
                 st.write(f"**Liquidation Time:** Year {scenario['liquidation_time']:.1f}")
         
         if "debt_paid_off" in scenario:
             st.write(f"**Debt Paid Off:** {'Yes' if scenario['debt_paid_off'] else 'No'}")
+            if "debt_payoff_probability" in scenario:
+                st.write(f"**Debt Payoff Probability:** {format_percent(scenario['debt_payoff_probability'])}")
         
         if scenario["scenario"].startswith("B"):
             st.write(f"**Loan Amount:** {format_currency(scenario['loan_amount'])}")
@@ -667,14 +936,12 @@ def create_scenario_charts(scenario_a, scenario_b, scenario_c):
         
         # Collateral ratio chart
         if "collateral_ratio_history" in scenario_c:
-            # Cap the ratio at 10 for better visualization
-            capped_ratios = [min(ratio, 10) for ratio in scenario_c["collateral_ratio_history"]]
-            
+            # Ratios already capped in the scenario function
             fig_collateral = go.Figure()
             
             fig_collateral.add_trace(go.Scatter(
                 x=scenario_c["time_points"],
-                y=capped_ratios,
+                y=scenario_c["collateral_ratio_history"],
                 mode='lines',
                 name='Collateral Ratio',
                 line=dict(color='#9b59b6', width=2)
@@ -700,13 +967,65 @@ def create_scenario_charts(scenario_a, scenario_b, scenario_c):
     
     return charts
 
+def create_btc_price_path_chart(model):
+    """Create a chart showing sample BTC price paths"""
+    # Select a subset of price paths for visualization
+    num_paths_to_show = 10
+    path_indices = np.linspace(0, model.num_simulations-1, num_paths_to_show, dtype=int)
+    
+    fig = go.Figure()
+    
+    # Get time points in years
+    time_points = np.linspace(0, model.T, model.total_steps + 1)
+    
+    # Add each path
+    for i, idx in enumerate(path_indices):
+        path = model.btc_price_paths[idx]
+        
+        # Use a color gradient from blue to red
+        hue = 240 * (1 - i / (num_paths_to_show - 1))  # 240 (blue) to 0 (red)
+        color = f"hsla({hue}, 100%, 50%, 0.5)"
+        
+        fig.add_trace(go.Scatter(
+            x=time_points,
+            y=path,
+            mode='lines',
+            name=f'Path {i+1}',
+            line=dict(color=color, width=1),
+            showlegend=(i == 0 or i == num_paths_to_show-1)
+        ))
+    
+    # Add median path
+    median_path_idx = np.argsort(model.btc_price_paths[:, -1])[model.num_simulations//2]
+    median_path = model.btc_price_paths[median_path_idx]
+    
+    fig.add_trace(go.Scatter(
+        x=time_points,
+        y=median_path,
+        mode='lines',
+        name='Median Path',
+        line=dict(color='black', width=2),
+        showlegend=True
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title='Sample BTC Price Paths (GBM)',
+        xaxis_title='Year',
+        yaxis_title='BTC Price ($)',
+        yaxis=dict(tickformat='$,.0f'),
+        height=400
+    )
+    
+    return fig
+
 def get_recommendation(scenario_a, scenario_b, scenario_c, simulations):
     """Get a recommendation based on the analysis"""
     # Determine best scenario based on base case net value
     scenarios = {
         "A": {"name": "Sell BTC to Buy House", "base_case": simulations["Scenario A"]["Base Case"]},
         "B": {"name": "Borrow Against BTC", "base_case": simulations["Scenario B"]["Base Case"]},
-        "C": {"name": "Self Paying Mortgage via BTC Appreciation", "base_case": simulations["Scenario C"]["Base Case"]}
+        "C": {"name": "BTC as Secondary Collateral", "base_case": simulations["Scenario C"]["Base Case"]}
     }
     
     best_scenario = max(scenarios.items(), key=lambda x: x[1]["base_case"])[0]
@@ -729,6 +1048,11 @@ def get_recommendation(scenario_a, scenario_b, scenario_c, simulations):
     
     max_upside_scenario = max(upside_potentials.items(), key=lambda x: x[1])[0]
     
+    # Calculate probability metrics
+    liquidation_prob_b = scenario_b.get("liquidation_probability", 0)
+    liquidation_prob_c = scenario_c.get("liquidation_probability", 0)
+    debt_payoff_prob_c = scenario_c.get("debt_payoff_probability", 0)
+    
     # Generate recommendation text
     recommendation = {
         "best_scenario": f"Scenario {best_scenario} - {scenarios[best_scenario]['name']}",
@@ -741,9 +1065,9 @@ def get_recommendation(scenario_a, scenario_b, scenario_c, simulations):
     if best_scenario == "A":
         recommendation["advice"] = "Selling BTC provides certainty but may miss out on future BTC appreciation."
     elif best_scenario == "B":
-        recommendation["advice"] = "Borrowing against BTC has liquidation risk if BTC price falls significantly."
+        recommendation["advice"] = f"Borrowing against BTC has a {format_percent(liquidation_prob_b)} chance of liquidation in our simulations."
     elif best_scenario == "C":
-        recommendation["advice"] = "Using BTC as collateral requires careful monitoring and may lead to complex tax situations."
+        recommendation["advice"] = f"Using BTC as collateral has a {format_percent(liquidation_prob_c)} chance of liquidation, but a {format_percent(debt_payoff_prob_c)} chance of paying off debt completely."
     
     return recommendation
 
@@ -753,11 +1077,13 @@ def main():
     Compare three strategies for using Bitcoin to purchase a house:
     - **Scenario A**: Sell BTC to buy a house
     - **Scenario B**: Borrow against BTC to buy a house
-    - **Scenario C**: Self Paying Mortgage via BTC Appreciation
+    - **Scenario C**: Use BTC as secondary collateral
+    
+    This model uses Geometric Brownian Motion (GBM) for stochastic Bitcoin price simulation.
     """)
     
     # Create tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["Inputs", "Results", "Charts", "Comparison"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Inputs", "Results", "Charts", "Comparison", "Simulations"])
     
     with tab1:
         st.header("Input Parameters")
@@ -769,98 +1095,67 @@ def main():
         with col1:
             st.subheader("Bitcoin Parameters")
             initial_btc = st.number_input("Initial BTC Holdings", 
-                                        min_value=None, value=1.0, step=None,
-                                        placeholder="1.0")
+                                         min_value=0.1, max_value=100.0, value=1.0, step=0.1)
             
-            current_btc_price = st.text_input("Current BTC Price ($) (default: 50000)", 
-                                            value="",
-                                            placeholder="50000")
-            current_btc_price = float(current_btc_price) if current_btc_price else 50000
+            initial_btc_price = st.number_input("Current BTC Price ($)", 
+                                             min_value=1000, max_value=1000000, value=50000, step=1000)
             
-            btc_purchase_price = st.text_input("BTC Purchase Price ($) (default: 20000)", 
-                                            value="",
-                                            placeholder="20000",
-                                            help="The price at which you originally acquired your Bitcoin (used for tax calculations)")
-            btc_purchase_price = float(btc_purchase_price) if btc_purchase_price else 20000
+            btc_basis_price = st.number_input("BTC Basis Price ($)", 
+                                           min_value=1000, max_value=1000000, value=20000, step=1000)
             
-            btc_appreciation_rate_str = st.text_input("BTC Annual Appreciation (%) (default: 20.0)", 
-                                                    value="",
-                                                    placeholder="20.0")
-            btc_appreciation_rate = float(btc_appreciation_rate_str) / 100 if btc_appreciation_rate_str else 0.20
+            btc_appreciation_rate = st.slider("BTC Expected Annual Return (μ) (%)", 
+                                           min_value=-20.0, max_value=100.0, value=20.0, step=1.0) / 100
             
-            btc_volatility_str = st.text_input("BTC Volatility (default: 0.6)", 
-                                            value="",
-                                            placeholder="0.6")
-            btc_volatility = float(btc_volatility_str) if btc_volatility_str else 0.6
+            btc_volatility = st.slider("BTC Volatility (σ)", 
+                                     min_value=0.1, max_value=2.0, value=0.6, step=0.1)
             
-            btc_selling_fee_str = st.text_input("BTC Selling Fee (%) (default: 1.0)", 
-                                            value="",
-                                            placeholder="1.0")
-            btc_selling_fee = float(btc_selling_fee_str) / 100 if btc_selling_fee_str else 0.01
+            btc_selling_fee = st.slider("BTC Selling Fee (%)", 
+                                     min_value=0.0, max_value=10.0, value=1.0, step=0.1) / 100
         
         # House Parameters
         with col2:
             st.subheader("House Parameters")
-            initial_house_price_str = st.text_input("Initial House Price ($) (default: 500000)", 
-                                                value="",
-                                                placeholder="500000")
-            initial_house_price = float(initial_house_price_str) if initial_house_price_str else 500000
+            initial_house_price = st.number_input("Initial House Price ($)", 
+                                               min_value=50000, max_value=10000000, value=500000, step=10000)
             
-            house_appreciation_rate_str = st.text_input("House Appreciation Rate (%) (default: 5.0)", 
-                                                    value="",
-                                                    placeholder="5.0")
-            house_appreciation_rate = float(house_appreciation_rate_str) / 100 if house_appreciation_rate_str else 0.05
+            house_appreciation_rate = st.slider("House Appreciation Rate (%)", 
+                                             min_value=-5.0, max_value=20.0, value=5.0, step=0.1) / 100
             
-            house_purchase_fee_str = st.text_input("House Purchase Fee (%) (default: 2.0)", 
-                                                value="",
-                                                placeholder="2.0")
-            house_purchase_fee = float(house_purchase_fee_str) / 100 if house_purchase_fee_str else 0.02
+            house_purchase_fee = st.slider("House Purchase Fee (%)", 
+                                        min_value=0.0, max_value=10.0, value=2.0, step=0.1) / 100
             
-            annual_house_cost_str = st.text_input("Annual House Costs (%) (default: 2.0)", 
-                                                value="",
-                                                placeholder="2.0")
-            annual_house_cost = float(annual_house_cost_str) / 100 if annual_house_cost_str else 0.02
+            annual_house_cost = st.slider("Annual House Costs (%)", 
+                                       min_value=0.0, max_value=10.0, value=2.0, step=0.1) / 100
         
         # Financial Parameters
         st.subheader("Financial Parameters")
         col3, col4 = st.columns(2)
         
         with col3:
-            capital_gains_tax_str = st.text_input("Capital Gains Tax (%) (default: 20.0)", 
-                                                value="",
-                                                placeholder="20.0")
-            capital_gains_tax = float(capital_gains_tax_str) / 100 if capital_gains_tax_str else 0.20
+            capital_gains_tax = st.slider("Capital Gains Tax (%)", 
+                                       min_value=0.0, max_value=50.0, value=20.0, step=1.0) / 100
             
-            loan_to_value_ratio_str = st.text_input("Loan-to-Value Ratio (%) (default: 40.0)", 
-                                                value="",
-                                                placeholder="40.0")
-            loan_to_value_ratio = float(loan_to_value_ratio_str) / 100 if loan_to_value_ratio_str else 0.40
+            loan_to_value_ratio = st.slider("Loan-to-Value Ratio (%)", 
+                                         min_value=10.0, max_value=90.0, value=40.0, step=1.0) / 100
         
         with col4:
-            mortgage_rate_str = st.text_input("Mortgage Rate (%) (default: 5.0)", 
-                                            value="",
-                                            placeholder="5.0")
-            mortgage_rate = float(mortgage_rate_str) / 100 if mortgage_rate_str else 0.05
+            mortgage_rate = st.slider("Mortgage Rate (%)", 
+                                    min_value=1.0, max_value=15.0, value=5.0, step=0.1) / 100
             
-            inflation_rate_str = st.text_input("Inflation Rate (%) (default: 3.0)", 
-                                            value="",
-                                            placeholder="3.0")
-            inflation_rate = float(inflation_rate_str) / 100 if inflation_rate_str else 0.03
+            inflation_rate = st.slider("Inflation Rate (%)", 
+                                     min_value=0.0, max_value=20.0, value=3.0, step=0.1) / 100
         
-        # Time Parameters
-        st.subheader("Time Parameters")
-        time_horizon_str = st.text_input("Time Horizon (Years) (default: 10)", 
-                                        value="",
-                                        placeholder="10")
-        time_horizon = int(float(time_horizon_str)) if time_horizon_str else 10
+        # Time and Simulation Parameters
+        st.subheader("Time and Simulation Parameters")
+        col5, col6 = st.columns(2)
         
-        # Add a note about Bitcoin's historical appreciation
-        st.info("""
-        **Note on Bitcoin Annual Appreciation:** Historically, Bitcoin has seen highly variable annual returns. 
-        While past performance averaged around 100% annual growth over its first decade (2010-2020), more recent 
-        expectations tend toward more moderate long-term appreciation rates of 20-30% annually. Adjust based on 
-        your outlook.
-        """)
+        with col5:
+            time_horizon = st.slider("Time Horizon (Years)", 
+                                   min_value=1, max_value=30, value=10, step=1)
+        
+        with col6:
+            num_simulations = st.slider("Number of Monte Carlo Simulations", 
+                                      min_value=100, max_value=2000, value=500, step=100)
         
         # Save/Load inputs
         st.subheader("Save/Load Configuration")
@@ -870,8 +1165,8 @@ def main():
             if st.button("Save Current Inputs"):
                 inputs = {
                     "initial_btc": initial_btc,
-                    "current_btc_price": current_btc_price,
-                    "btc_purchase_price": btc_purchase_price,
+                    "initial_btc_price": initial_btc_price,
+                    "btc_basis_price": btc_basis_price,
                     "btc_appreciation_rate": btc_appreciation_rate,
                     "initial_house_price": initial_house_price,
                     "house_appreciation_rate": house_appreciation_rate,
@@ -883,7 +1178,8 @@ def main():
                     "inflation_rate": inflation_rate,
                     "btc_selling_fee": btc_selling_fee,
                     "house_purchase_fee": house_purchase_fee,
-                    "annual_house_cost": annual_house_cost
+                    "annual_house_cost": annual_house_cost,
+                    "num_simulations": num_simulations
                 }
                 
                 filename = f"btc_housing_inputs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
@@ -901,12 +1197,12 @@ def main():
         
         # Run analysis button
         if st.button("Run Analysis", type="primary"):
-            with st.spinner("Running analysis..."):
+            with st.spinner("Running Monte Carlo simulations..."):
                 # Get input values
                 inputs = {
                     "initial_btc": initial_btc,
-                    "current_btc_price": current_btc_price,
-                    "btc_purchase_price": btc_purchase_price,
+                    "initial_btc_price": initial_btc_price,
+                    "btc_basis_price": btc_basis_price,
                     "btc_appreciation_rate": btc_appreciation_rate,
                     "initial_house_price": initial_house_price,
                     "house_appreciation_rate": house_appreciation_rate,
@@ -918,7 +1214,8 @@ def main():
                     "inflation_rate": inflation_rate,
                     "btc_selling_fee": btc_selling_fee,
                     "house_purchase_fee": house_purchase_fee,
-                    "annual_house_cost": annual_house_cost
+                    "annual_house_cost": annual_house_cost,
+                    "num_simulations": num_simulations
                 }
                 
                 # Run analysis
@@ -932,7 +1229,7 @@ def main():
                 st.session_state.simulations = simulations
                 
                 # Switch to results tab
-                st.rerun()
+                st.experimental_rerun()
 
     with tab2:
         if 'scenario_a' in st.session_state:
@@ -1062,7 +1359,7 @@ def main():
                     format_currency(st.session_state.simulations["Scenario B"]["Bear Case"]),
                     format_currency(st.session_state.simulations["Scenario B"]["Base Case"]),
                     format_currency(st.session_state.simulations["Scenario B"]["Bull Case"]),
-                    "Yes" if st.session_state.scenario_b["liquidation_occurred"] else "No"
+                    format_percent(st.session_state.scenario_b.get("liquidation_probability", 0))
                 ],
                 "Scenario C": [
                     format_currency(st.session_state.scenario_c["net_value"]),
@@ -1072,7 +1369,7 @@ def main():
                     format_currency(st.session_state.simulations["Scenario C"]["Bear Case"]),
                     format_currency(st.session_state.simulations["Scenario C"]["Base Case"]),
                     format_currency(st.session_state.simulations["Scenario C"]["Bull Case"]),
-                    "Yes" if st.session_state.scenario_c["liquidation_occurred"] else "No"
+                    format_percent(st.session_state.scenario_c.get("liquidation_probability", 0))
                 ]
             }
             
@@ -1112,7 +1409,7 @@ def main():
                     st.session_state.simulations["Scenario B"]["Bear Case"],
                     st.session_state.simulations["Scenario B"]["Base Case"],
                     st.session_state.simulations["Scenario B"]["Bull Case"],
-                    0 if st.session_state.scenario_b["liquidation_occurred"] else 80
+                    100 - st.session_state.scenario_b.get("liquidation_probability", 0)  # Invert liquidation probability
                 ],
                 "Scenario C": [
                     st.session_state.scenario_c["net_value"],
@@ -1122,7 +1419,7 @@ def main():
                     st.session_state.simulations["Scenario C"]["Bear Case"],
                     st.session_state.simulations["Scenario C"]["Base Case"],
                     st.session_state.simulations["Scenario C"]["Bull Case"],
-                    0 if st.session_state.scenario_c["liquidation_occurred"] else 60
+                    100 - st.session_state.scenario_c.get("liquidation_probability", 0)  # Invert liquidation probability
                 ]
             }
             
@@ -1182,9 +1479,104 @@ def main():
         else:
             st.info("Run the analysis in the Inputs tab to see comparison")
     
+    with tab5:
+        if 'model' in st.session_state:
+            st.header("Monte Carlo Simulations")
+            
+            # Display BTC price path chart
+            st.subheader("Bitcoin Price Paths (Geometric Brownian Motion)")
+            btc_price_chart = create_btc_price_path_chart(st.session_state.model)
+            st.plotly_chart(btc_price_chart, use_container_width=True)
+            
+            # Explanation of GBM
+            with st.expander("About Geometric Brownian Motion (GBM)"):
+                st.markdown("""
+                **Geometric Brownian Motion (GBM)** is a continuous-time stochastic process often used to model stock prices, cryptocurrencies, and other financial assets. The model is defined by the stochastic differential equation:
+                
+                dS = μS dt + σS dW
+                
+                Where:
+                - S is the asset price
+                - μ is the drift (expected return)
+                - σ is the volatility
+                - dW is a Wiener process (Brownian motion)
+                
+                GBM assumes that:
+                1. Price changes are independent of the past (Markov property)
+                2. Returns are normally distributed
+                3. Volatility is constant
+                
+                While these assumptions may not perfectly hold for Bitcoin, GBM provides a reasonable approximation for modeling future price scenarios, especially for risk assessment.
+                """)
+            
+            # Display probability metrics
+            st.subheader("Probability Metrics")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Scenario B liquidation probability
+                liquidation_prob_b = st.session_state.scenario_b.get("liquidation_probability", 0)
+                st.metric("Scenario B Liquidation Probability", format_percent(liquidation_prob_b))
+                
+                # BTC price doubled probability
+                btc_price_paths = st.session_state.model.btc_price_paths
+                final_btc_prices = btc_price_paths[:, -1]
+                doubled_prob = np.mean(final_btc_prices > 2 * st.session_state.model.P0) * 100
+                st.metric("Probability BTC Price Doubles", format_percent(doubled_prob))
+            
+            with col2:
+                # Scenario C metrics
+                liquidation_prob_c = st.session_state.scenario_c.get("liquidation_probability", 0)
+                st.metric("Scenario C Liquidation Probability", format_percent(liquidation_prob_c))
+                
+                debt_payoff_prob = st.session_state.scenario_c.get("debt_payoff_probability", 0)
+                st.metric("Scenario C Debt Payoff Probability", format_percent(debt_payoff_prob))
+            
+            # Display distribution of final BTC prices
+            st.subheader("Distribution of Final BTC Prices")
+            
+            fig = go.Figure()
+            fig.add_trace(go.Histogram(
+                x=final_btc_prices,
+                nbinsx=30,
+                marker_color='#f39c12'
+            ))
+            
+            # Add vertical line for initial price
+            initial_price = st.session_state.model.P0
+            fig.add_shape(
+                type="line",
+                x0=initial_price, y0=0,
+                x1=initial_price, y1=1,
+                yref="paper",
+                line=dict(color="red", width=2, dash="dash")
+            )
+            
+            fig.add_annotation(
+                x=initial_price,
+                y=0.95,
+                yref="paper",
+                text="Initial Price",
+                showarrow=True,
+                arrowhead=1
+            )
+            
+            fig.update_layout(
+                title='Distribution of Final BTC Prices',
+                xaxis_title='BTC Price ($)',
+                xaxis=dict(tickformat='$,.0f'),
+                yaxis_title='Frequency',
+                height=400
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Run the analysis in the Inputs tab to see simulation details")
+    
     # Add footer
     st.markdown("---")
-    st.markdown("Bitcoin Housing Strategy Analyzer - Helping you make informed decisions about Bitcoin and real estate")
+    st.markdown("Bitcoin Housing Strategy Analyzer - Using Geometric Brownian Motion to model Bitcoin price uncertainty")
 
 if __name__ == "__main__":
     main()
