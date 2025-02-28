@@ -1341,6 +1341,17 @@ def main():
         if 'scenario_a' in st.session_state:
             st.header("Scenario Comparison")
             
+            # Helper function to safely get values
+            def safe_get(scenario, key, default="N/A"):
+                if key in scenario:
+                    return format_currency(scenario[key])
+                return default
+            
+            def safe_get_percent(scenario, key, default="N/A"):
+                if key in scenario:
+                    return format_percent(scenario[key])
+                return default
+            
             # Create a dataframe for comparison
             comparison_data = {
                 "Metric": [
@@ -1354,34 +1365,34 @@ def main():
                     "Liquidation Risk"
                 ],
                 "Scenario A": [
-                    format_currency(st.session_state.scenario_a["net_value"]),
-                    format_percent(st.session_state.scenario_a["total_return"]),
-                    format_currency(st.session_state.scenario_a["final_house_value"]),
-                    format_currency(st.session_state.scenario_a["final_btc_value_if_held"]) + " (if held)",
+                    safe_get(st.session_state.scenario_a, "net_value"),
+                    safe_get_percent(st.session_state.scenario_a, "total_return"),
+                    safe_get(st.session_state.scenario_a, "final_house_value"),
+                    safe_get(st.session_state.scenario_a, "final_btc_value_if_held") + " (if held)" if "final_btc_value_if_held" in st.session_state.scenario_a else "N/A",
                     format_currency(st.session_state.simulations["Scenario A"]["Bear Case"]),
                     format_currency(st.session_state.simulations["Scenario A"]["Base Case"]),
                     format_currency(st.session_state.simulations["Scenario A"]["Bull Case"]),
                     "None"
                 ],
                 "Scenario B": [
-                    format_currency(st.session_state.scenario_b["net_value"]),
-                    format_percent(st.session_state.scenario_b["total_return"]),
-                    format_currency(st.session_state.scenario_b["final_house_value"]),
-                    format_currency(st.session_state.scenario_b["final_btc_value"]),
+                    safe_get(st.session_state.scenario_b, "net_value"),
+                    safe_get_percent(st.session_state.scenario_b, "total_return"),
+                    safe_get(st.session_state.scenario_b, "final_house_value"),
+                    safe_get(st.session_state.scenario_b, "final_btc_value"),
                     format_currency(st.session_state.simulations["Scenario B"]["Bear Case"]),
                     format_currency(st.session_state.simulations["Scenario B"]["Base Case"]),
                     format_currency(st.session_state.simulations["Scenario B"]["Bull Case"]),
-                    format_percent(st.session_state.scenario_b.get("liquidation_probability", 0))
+                    format_percent(st.session_state.scenario_b.get("liquidation_probability", 0)) if "liquidation_probability" in st.session_state.scenario_b else "N/A"
                 ],
                 "Scenario C": [
-                    format_currency(st.session_state.scenario_c["net_value"]),
-                    format_percent(st.session_state.scenario_c["total_return"]),
-                    format_currency(st.session_state.scenario_c["final_house_value"]),
-                    format_currency(st.session_state.scenario_c["final_btc_value"]),
+                    safe_get(st.session_state.scenario_c, "net_value"),
+                    safe_get_percent(st.session_state.scenario_c, "total_return"),
+                    safe_get(st.session_state.scenario_c, "final_house_value"),
+                    safe_get(st.session_state.scenario_c, "final_btc_value"),
                     format_currency(st.session_state.simulations["Scenario C"]["Bear Case"]),
                     format_currency(st.session_state.simulations["Scenario C"]["Base Case"]),
                     format_currency(st.session_state.simulations["Scenario C"]["Bull Case"]),
-                    format_percent(st.session_state.scenario_c.get("liquidation_probability", 0))
+                    format_percent(st.session_state.scenario_c.get("liquidation_probability", 0)) if "liquidation_probability" in st.session_state.scenario_c else "N/A"
                 ]
             }
             
