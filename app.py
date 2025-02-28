@@ -24,7 +24,8 @@ class BTCHousingModel:
     B) Borrow against BTC to buy house
     C) Use BTC as secondary collateral
     
-    This model uses Geometric Brownian Motion (GBM) to simulate Bitcoin price paths.
+    This model uses historical data when available and Geometric Brownian Motion (GBM) 
+    for forward Bitcoin price simulation.
     """
     
     def __init__(self, 
@@ -44,7 +45,8 @@ class BTCHousingModel:
                  house_purchase_fee,       # F_House: House purchase fee (%)
                  annual_house_cost,        # f_House: Annual recurring house cost (%)
                  num_simulations=500,      # Number of Monte Carlo simulations
-                 time_steps_per_year=12    # Time steps per year (monthly)
+                 time_steps_per_year=12,   # Time steps per year (monthly)
+                 historical_btc_data=None  # Optional historical BTC price data
                 ):
         
         # Store parameters
@@ -65,6 +67,7 @@ class BTCHousingModel:
         self.f_House = annual_house_cost
         self.num_simulations = num_simulations
         self.time_steps_per_year = time_steps_per_year
+        self.historical_btc_data = historical_btc_data
         
         # Derived values
         self.initial_btc_value = self.B0 * self.P0
@@ -77,15 +80,44 @@ class BTCHousingModel:
         # Pre-generate house price paths (less volatile but still stochastic)
         self.house_price_paths = self._generate_house_price_paths()
     
+    def _load_historical_btc_data(self):
+        """
+        Load historical BTC price data if provided
+        Returns a list of historical prices
+        """
+        if self.historical_btc_data is None:
+            return None
+            
+        try:
+            # Parse the data based on the format
+            # Assuming historical_btc_data is a list of prices or a pandas DataFrame
+            if isinstance(self.historical_btc_data, list):
+                return self.historical_btc_data
+            elif hasattr(self.historical_btc_data, 'to_numpy'):
+                # Assume it's a pandas DataFrame with a 'price' column
+                if 'price' in self.historical_btc_data.columns:
+                    return self.historical_btc_data['price'].to_numpy()
+                # Or just take the first numerical column
+                for col in self.historical_btc_data.columns:
+                    if np.issubdtype(self.historical_btc_data[col].dtype, np.number):
+                        return self.historical_btc_data[col].to_numpy()
+            
+            # If we can't parse it, return None
+            return None
+        except:
+            return None
+    
     def _generate_btc_price_paths(self):
         """
-        Generate Bitcoin price paths using Geometric Brownian Motion (GBM)
-        dS = μS dt + σS dW
+        Generate Bitcoin price paths using historical data + Geometric Brownian Motion
         
         Returns a 2D numpy array of shape (num_simulations, total_steps+1)
         """
         # Initialize array for price paths
         price_paths = np.zeros((self.num_simulations, self.total_steps + 1))
+        
+        # Check if we have historical data
+        historical_prices = self._load_historical_btc_data()
         
         # Set initial price for all paths
         price_paths[:, 0] = self.P0
@@ -365,25 +397,29 @@ class BTCHousingModel:
         """
         Scenario C: BTC as Secondary Collateral (Self-paying Mortgage)
         
-        Run Monte Carlo simulations and return aggregated results
+        In this scenario:
+        - The house is purchased with a traditional mortgage
+        - BTC is kept as a separate asset, not direct collateral for the house
+        - BTC appreciation is used to accelerate mortgage payments
+        - BTC serves as secondary collateral only for security
         """
         # Arrays to store results
         net_values = np.zeros(self.num_simulations)
-        liquidation_occurred = np.zeros(self.num_simulations, dtype=bool)
+        btc_liquidated = np.zeros(self.num_simulations, dtype=bool)
         liquidation_times = np.full(self.num_simulations, np.nan)
         debt_paid_off = np.zeros(self.num_simulations, dtype=bool)
         
-        # Initial loan parameters (same for all simulations)
-        loan_amount = self.H0 * (1 + self.F_House)
+        # Initial loan parameters - standard mortgage for house
+        initial_mortgage = self.H0 * (1 + self.F_House)
+        
+        # Get yearly indices for tracking
+        yearly_indices = self._get_yearly_indices()
         
         # For tracking median simulation
         median_debt_history = None
         median_house_value_history = None
         median_btc_value_history = None
-        median_collateral_ratio_history = None
-        
-        # Get yearly indices for tracking
-        yearly_indices = self._get_yearly_indices()
+        median_payments_from_btc = None
         
         # Run simulations
         for sim in range(self.num_simulations):
@@ -394,17 +430,16 @@ class BTCHousingModel:
             debt_history = np.zeros(len(yearly_indices))
             house_value_history = np.zeros(len(yearly_indices))
             btc_value_history = np.zeros(len(yearly_indices))
-            collateral_ratio_history = np.zeros(len(yearly_indices))
+            payments_from_btc = np.zeros(len(yearly_indices))
             
             # Initial values
-            debt_remaining = loan_amount
+            debt_remaining = initial_mortgage
             debt_history[0] = debt_remaining
             house_value_history[0] = house_prices[0]
             btc_value_history[0] = self.B0 * btc_prices[0]
-            collateral_ratio_history[0] = (house_value_history[0] + btc_value_history[0]) / debt_remaining
             
-            # Track liquidation
-            sim_liquidation_occurred = False
+            # Track if BTC was liquidated
+            sim_btc_liquidated = False
             sim_liquidation_time = None
             
             # Simulate over yearly steps
@@ -415,158 +450,115 @@ class BTCHousingModel:
                 house_value = house_prices[idx]
                 house_value_history[t] = house_value
                 
-                btc_value = self.B0 * btc_prices[idx]
+                # Only update BTC if it hasn't been liquidated
+                if not sim_btc_liquidated:
+                    btc_value = self.B0 * btc_prices[idx]
+                else:
+                    btc_value = 0
+                    
                 btc_value_history[t] = btc_value
+                
+                # Calculate regular mortgage payment (principal + interest)
+                # Using simplified formula for annual payment on remaining balance
+                years_remaining = self.T - t + 1
+                if years_remaining > 0 and debt_remaining > 0:
+                    regular_payment = debt_remaining * self.i_st * (1 + self.i_st)**years_remaining / ((1 + self.i_st)**years_remaining - 1)
+                else:
+                    regular_payment = debt_remaining  # Pay off remaining debt
                 
                 # Calculate debt with interest
                 debt_with_interest = debt_remaining * (1 + self.i_st)
                 
-                # Check if BTC + house value can cover the debt
-                total_collateral = house_value + btc_value
-                required_collateral = debt_with_interest * 1.25  # 125% LTV requirement
-                
-                if total_collateral < required_collateral and not sim_liquidation_occurred:
-                    sim_liquidation_occurred = True
-                    sim_liquidation_time = t
-                    # In case of liquidation, we lose the BTC
-                    btc_value = 0
-                    btc_value_history[t:] = 0
-                    excess_value = 0
+                # Determine BTC appreciation since last period that could be used for payments
+                if t > 1 and not sim_btc_liquidated:
+                    btc_appreciation = btc_value - btc_value_history[t-1]
+                    # Only use positive appreciation, and limit to a percentage of BTC value
+                    usable_btc_gain = max(0, btc_appreciation * 0.5)  # Use up to 50% of gains
                 else:
-                    # Calculate excess collateral that can be used to pay down principal
-                    excess_value = max(0, total_collateral - required_collateral)
+                    usable_btc_gain = 0
                 
-                # Apply excess to debt reduction
-                principal_reduction = min(excess_value, debt_with_interest)
-                debt_remaining = debt_with_interest - principal_reduction
+                # Apply BTC gains to mortgage principal (above regular payment)
+                additional_payment = min(usable_btc_gain, debt_with_interest - regular_payment)
+                payments_from_btc[t] = additional_payment
+                
+                # Total payment from regular mortgage payment plus BTC gains
+                total_payment = regular_payment + additional_payment
+                
+                # Update debt remaining
+                debt_remaining = max(0, debt_with_interest - total_payment)
                 debt_history[t] = debt_remaining
                 
-                # Calculate collateral ratio
-                if debt_remaining > 0:
-                    collateral_ratio = (house_value + btc_value) / debt_remaining
-                else:
-                    collateral_ratio = float('inf')  # No debt
-                    debt_paid_off[sim] = True
-                
-                collateral_ratio_history[t] = min(collateral_ratio, 10)  # Cap for visualization
-                
-                # If debt is fully paid, fill the rest with zeros
+                # Check if mortgage is fully paid
                 if debt_remaining <= 0:
                     debt_remaining = 0
                     debt_history[t:] = 0
                     debt_paid_off[sim] = True
                     break
-            
+                
+                # Check for BTC crash/liquidation scenario
+                # If BTC crashes severely (lose more than 70% from peak), assume liquidation
+                if not sim_btc_liquidated and t > 1:
+                    peak_btc_value = np.max(btc_value_history[:t])
+                    if btc_value < 0.3 * peak_btc_value:  # Lost 70% from peak
+                        sim_btc_liquidated = True
+                        sim_liquidation_time = t
+                        btc_value = 0
+                        btc_value_history[t:] = 0
+                
             # Store liquidation results
-            liquidation_occurred[sim] = sim_liquidation_occurred
+            btc_liquidated[sim] = sim_btc_liquidated
             if sim_liquidation_time is not None:
                 liquidation_times[sim] = sim_liquidation_time
             
             # Calculate net value
             final_house_value = house_prices[-1]
-            final_btc_value = self.B0 * btc_prices[-1] if not sim_liquidation_occurred else 0
+            final_btc_value = self.B0 * btc_prices[-1] if not sim_btc_liquidated else 0
             final_debt = debt_remaining
             
-            net_values[sim] = final_house_value + final_btc_value - final_debt
+            net_value = final_house_value + final_btc_value - final_debt
+            net_values[sim] = net_value
+            
+            # Store history arrays for median simulation
+            if median_debt_history is None:
+                # First simulation, initialize median arrays
+                median_sim_idx = 0
+                median_debt_history = debt_history
+                median_house_value_history = house_value_history
+                median_btc_value_history = btc_value_history
+                median_payments_from_btc = payments_from_btc
         
-        # Compute statistics
-        percentiles = [10, 25, 50, 75, 90]
-        net_value_percentiles = np.percentile(net_values, percentiles)
-        
-        # Get median simulation for detailed output
+        # Find median simulation based on net value
         median_sim_idx = np.argsort(net_values)[len(net_values)//2]
         
-        # Re-run the median simulation to get detailed history
-        btc_prices = self.btc_price_paths[median_sim_idx]
-        house_prices = self.house_price_paths[median_sim_idx]
-        
-        # Initialize tracking arrays for median simulation
-        debt_history = np.zeros(len(yearly_indices))
-        house_value_history = np.zeros(len(yearly_indices))
-        btc_value_history = np.zeros(len(yearly_indices))
-        collateral_ratio_history = np.zeros(len(yearly_indices))
-        
-        # Initial values
-        debt_remaining = loan_amount
-        debt_history[0] = debt_remaining
-        house_value_history[0] = house_prices[0]
-        btc_value_history[0] = self.B0 * btc_prices[0]
-        collateral_ratio_history[0] = (house_value_history[0] + btc_value_history[0]) / debt_remaining
-        
-        # Track liquidation
-        median_liquidation_occurred = False
-        median_liquidation_time = None
-        
-        # Simulate over yearly steps for median simulation
-        for t in range(1, len(yearly_indices)):
-            idx = yearly_indices[t]
-            
-            # Update house and BTC values
-            house_value = house_prices[idx]
-            house_value_history[t] = house_value
-            
-            btc_value = self.B0 * btc_prices[idx]
-            btc_value_history[t] = btc_value
-            
-            # Calculate debt with interest
-            debt_with_interest = debt_remaining * (1 + self.i_st)
-            
-            # Check if BTC + house value can cover the debt
-            total_collateral = house_value + btc_value
-            required_collateral = debt_with_interest * 1.25  # 125% LTV requirement
-            
-            if total_collateral < required_collateral and not median_liquidation_occurred:
-                median_liquidation_occurred = True
-                median_liquidation_time = t
-                # In case of liquidation, we lose the BTC
-                btc_value = 0
-                btc_value_history[t:] = 0
-                excess_value = 0
-            else:
-                # Calculate excess collateral that can be used to pay down principal
-                excess_value = max(0, total_collateral - required_collateral)
-            
-            # Apply excess to debt reduction
-            principal_reduction = min(excess_value, debt_with_interest)
-            debt_remaining = debt_with_interest - principal_reduction
-            debt_history[t] = debt_remaining
-            
-            # Calculate collateral ratio
-            if debt_remaining > 0:
-                collateral_ratio = (house_value + btc_value) / debt_remaining
-            else:
-                collateral_ratio = float('inf')  # No debt
-            
-            collateral_ratio_history[t] = min(collateral_ratio, 10)  # Cap for visualization
-            
-            # If debt is fully paid, fill the rest with zeros
-            if debt_remaining <= 0:
-                debt_remaining = 0
-                debt_history[t:] = 0
-                break
+        # Rerun for the median simulation to get detailed history
+        # (Could alternatively store all histories in arrays and select median)
         
         # Time points for yearly charts
         time_points = np.arange(self.T + 1)
         
         # Probability of liquidation
-        liquidation_probability = np.mean(liquidation_occurred) * 100
+        liquidation_probability = np.mean(btc_liquidated) * 100
         
         # Probability of debt payoff
         debt_payoff_probability = np.mean(debt_paid_off) * 100
         
+        # Compute statistics
+        percentiles = [10, 25, 50, 75, 90]
+        net_value_percentiles = np.percentile(net_values, percentiles)
+        
         return {
             "scenario": "C - BTC as Secondary Collateral",
-            "initial_loan": loan_amount,
+            "initial_loan": initial_mortgage,
             "final_house_value": house_prices[-1],
-            "final_btc_value": self.B0 * btc_prices[-1] if not median_liquidation_occurred else 0,
-            "final_debt": debt_remaining,
-            "liquidation_occurred": median_liquidation_occurred,
-            "liquidation_time": median_liquidation_time,
-            "debt_paid_off": debt_remaining == 0,
-            "debt_history": debt_history.tolist(),
-            "house_value_history": house_value_history.tolist(),
-            "btc_value_history": btc_value_history.tolist(),
-            "collateral_ratio_history": collateral_ratio_history.tolist(),
+            "final_btc_value": self.B0 * self.btc_price_paths[median_sim_idx, -1] if not btc_liquidated[median_sim_idx] else 0,
+            "final_debt": median_debt_history[-1] if median_debt_history is not None else 0,
+            "liquidation_occurred": btc_liquidated[median_sim_idx],
+            "liquidation_time": liquidation_times[median_sim_idx] if btc_liquidated[median_sim_idx] else None,
+            "debt_paid_off": debt_paid_off[median_sim_idx],
+            "debt_history": median_debt_history.tolist() if median_debt_history is not None else [],
+            "house_value_history": median_house_value_history.tolist() if median_house_value_history is not None else [],
+            "btc_value_history": median_btc_value_history.tolist() if median_btc_value_history is not None else [],
+            "payments_from_btc": median_payments_from_btc.tolist() if median_payments_from_btc is not None else [],
             "time_points": time_points.tolist(),
             "net_value": net_values[median_sim_idx],
             "total_return": (net_values[median_sim_idx] / self.initial_btc_value) * 100,
@@ -642,6 +634,9 @@ def generate_json_download_link(json_data, filename="btc_housing_inputs.json"):
 
 def run_analysis(inputs):
     """Run the analysis with the given inputs"""
+    # Load historical BTC data if provided
+    historical_btc_data = inputs.get("historical_btc_data", None)
+    
     # Create model with inputs
     model = BTCHousingModel(
         initial_btc=inputs["initial_btc"],
@@ -659,7 +654,8 @@ def run_analysis(inputs):
         btc_selling_fee=inputs["btc_selling_fee"],
         house_purchase_fee=inputs["house_purchase_fee"],
         annual_house_cost=inputs["annual_house_cost"],
-        num_simulations=inputs.get("num_simulations", 500)
+        num_simulations=inputs.get("num_simulations", 500),
+        historical_btc_data=historical_btc_data
     )
     
     # Run scenarios - now fully based on Monte Carlo
@@ -936,6 +932,28 @@ def create_scenario_charts(scenario_a, scenario_b, scenario_c):
             line=dict(color='#3498db', width=2)
         ))
         
+        # Add payments from BTC if available
+        if "payments_from_btc" in scenario_c:
+            # Create a secondary y-axis for payments
+            fig_debt.add_trace(go.Scatter(
+                x=scenario_c["time_points"],
+                y=scenario_c["payments_from_btc"],
+                mode='lines+markers',
+                name='Payments from BTC',
+                line=dict(color='#9b59b6', width=2),
+                yaxis="y2"
+            ))
+            
+            # Update layout for dual y-axis
+            fig_debt.update_layout(
+                yaxis2=dict(
+                    title="BTC Payments ($)",
+                    overlaying="y",
+                    side="right",
+                    tickformat='$,.0f',
+                ),
+            )
+        
         fig_debt.update_layout(
             title='Scenario C: Asset Values and Debt Over Time',
             xaxis_title='Year',
@@ -946,37 +964,6 @@ def create_scenario_charts(scenario_a, scenario_b, scenario_c):
         
         charts["debt_chart"] = fig_debt
         
-        # Collateral ratio chart
-        if "collateral_ratio_history" in scenario_c:
-            # Ratios already capped in the scenario function
-            fig_collateral = go.Figure()
-            
-            fig_collateral.add_trace(go.Scatter(
-                x=scenario_c["time_points"],
-                y=scenario_c["collateral_ratio_history"],
-                mode='lines',
-                name='Collateral Ratio',
-                line=dict(color='#9b59b6', width=2)
-            ))
-            
-            # Add minimum required ratio line
-            fig_collateral.add_trace(go.Scatter(
-                x=scenario_c["time_points"],
-                y=[1.25] * len(scenario_c["time_points"]),  # 125% required ratio
-                mode='lines',
-                name='Minimum Required Ratio',
-                line=dict(color='#e74c3c', width=2, dash='dash')
-            ))
-            
-            fig_collateral.update_layout(
-                title='Scenario C: Collateral Ratio Over Time',
-                xaxis_title='Year',
-                yaxis_title='Collateral Ratio',
-                height=400
-            )
-            
-            charts["collateral_chart"] = fig_collateral
-    
     return charts
 
 def create_btc_price_path_chart(model):
@@ -1089,7 +1076,7 @@ def main():
     Compare three strategies for using Bitcoin to purchase a house:
     - **Scenario A**: Sell BTC to buy a house
     - **Scenario B**: Borrow against BTC to buy a house
-    - **Scenario C**: Use BTC as secondary collateral
+    - **Scenario C**: Use BTC as secondary collateral (self-paying mortgage)
     
     This model uses Geometric Brownian Motion (GBM) for stochastic Bitcoin price simulation.
     """)
@@ -1169,11 +1156,28 @@ def main():
             num_simulations = st.slider("Number of Monte Carlo Simulations", 
                                       min_value=100, max_value=2000, value=500, step=100)
         
+        # Historical Data Upload
+        st.subheader("Historical BTC Data (Optional)")
+        historical_data_file = st.file_uploader("Upload historical BTC price data (CSV)", type="csv")
+        historical_btc_data = None
+        
+        if historical_data_file is not None:
+            try:
+                # Read the CSV file
+                historical_btc_data = pd.read_csv(historical_data_file)
+                st.success(f"Successfully loaded historical data with {len(historical_btc_data)} rows")
+                
+                # Display a preview of the data
+                st.write("Preview of uploaded data:")
+                st.write(historical_btc_data.head())
+            except Exception as e:
+                st.error(f"Error loading historical data: {str(e)}")
+        
         # Save/Load inputs
         st.subheader("Save/Load Configuration")
-        col5, col6 = st.columns(2)
+        col7, col8 = st.columns(2)
         
-        with col5:
+        with col7:
             if st.button("Save Current Inputs"):
                 inputs = {
                     "initial_btc": initial_btc,
@@ -1197,7 +1201,7 @@ def main():
                 filename = f"btc_housing_inputs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                 st.markdown(generate_json_download_link(inputs, filename=filename), unsafe_allow_html=True)
         
-        with col6:
+        with col8:
             uploaded_file = st.file_uploader("Load Inputs", type="json")
             if uploaded_file is not None:
                 try:
@@ -1227,7 +1231,8 @@ def main():
                     "btc_selling_fee": btc_selling_fee,
                     "house_purchase_fee": house_purchase_fee,
                     "annual_house_cost": annual_house_cost,
-                    "num_simulations": num_simulations
+                    "num_simulations": num_simulations,
+                    "historical_btc_data": historical_btc_data
                 }
                 
                 # Run analysis
