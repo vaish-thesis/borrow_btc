@@ -161,14 +161,14 @@ class BTCHousingModel:
         }
 
     def simulate_scenarios(self, num_simulations=500):
-        """Run Monte Carlo simulations for all scenarios."""
+        """Run Monte Carlo simulations for all scenarios with debug outputs."""
         scenario_a_net_values = []
         scenario_b_net_values = []
         scenario_c_net_values = []
         scenario_b_liquidation = []
         scenario_c_liquidation = []
 
-        for _ in range(num_simulations):
+        for sim in range(num_simulations):
             btc_rate = np.random.normal(self.rb, self.sigma_b)
             house_rate = np.random.normal(self.rh, self.rh * 0.2)
             result_a = self.scenario_a_sell_btc()
@@ -179,6 +179,10 @@ class BTCHousingModel:
             result_c = self.scenario_c_self_paying_mortgage(btc_rate=btc_rate, house_rate=house_rate, num_paths=1)
             scenario_c_net_values.append(result_c["net_values"][0])
             scenario_c_liquidation.append(result_c["liquidation_occurred_list"][0])
+
+            # Debug output every 100 simulations
+            if sim % 100 == 0:
+                print(f"Simulation {sim}: A_net={result_a['net_value']:.2f}, B_net={result_b['net_values'][0]:.2f}, C_net={result_c['net_values'][0]:.2f}")
 
         percentiles = [10, 50, 90]
         return {
@@ -225,6 +229,15 @@ def get_recommendation(scenario_a, scenario_b, scenario_c, risk_aversion):
     best_scenario = max(scores, key=scores.get)
     return f"Recommended Scenario: {best_scenario} with score {scores[best_scenario]:,.2f}"
 
+def create_distribution_chart(scenario_a, scenario_b, scenario_c):
+    """Create a box plot for the distribution of net values."""
+    fig = go.Figure()
+    fig.add_trace(go.Box(y=scenario_a["net_values"], name="A - Sell BTC to Buy House"))
+    fig.add_trace(go.Box(y=scenario_b["net_values"], name="B - Borrow Against BTC"))
+    fig.add_trace(go.Box(y=scenario_c["net_values"], name="C - Self-Paying Mortgage via Bitcoin Gains"))
+    fig.update_layout(title="Distribution of Net Values Across Simulations", xaxis_title="Scenario", yaxis_title="Net Value ($)")
+    return fig
+
 def create_radar_chart(scenario_a, scenario_b, scenario_c):
     """Create a radar chart comparing scenarios."""
     categories = ["Net Value", "Risk Avoidance", "Flexibility", "Leverage"]
@@ -232,21 +245,54 @@ def create_radar_chart(scenario_a, scenario_b, scenario_c):
     max_net_value = max(scenario_a["net_value"], scenario_b["avg_net_value"], scenario_c["avg_net_value"])
     values_a = [
         scenario_a["net_value"] / max_net_value * 100,
-        100, 20, 0
+        100, 0, 0
     ]
     values_b = [
         scenario_b["avg_net_value"] / max_net_value * 100,
         100 - scenario_b["liquidation_probability"],
-        80, 80
+        100, 100
     ]
     values_c = [
         scenario_c["avg_net_value"] / max_net_value * 100,
         100 - scenario_c["liquidation_probability"],
-        60, 60
+        50, 50
     ]
     for values, name in zip([values_a, values_b, values_c], ["A - Sell BTC to Buy House", "B - Borrow Against BTC", "C - Self-Paying Mortgage via Bitcoin Gains"]):
         fig.add_trace(go.Scatterpolar(r=values, theta=categories, fill='toself', name=name))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True)
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, title="Scenario Comparison (Radar Chart)")
+    return fig
+
+def create_bar_chart(scenario_a, scenario_b, scenario_c):
+    """Create a bar chart comparing scenarios."""
+    categories = ["Net Value", "Risk Avoidance", "Flexibility", "Leverage"]
+    max_net_value = max(scenario_a["net_value"], scenario_b["avg_net_value"], scenario_c["avg_net_value"])
+    values_a = [scenario_a["net_value"] / max_net_value * 100, 100, 0, 0]
+    values_b = [scenario_b["avg_net_value"] / max_net_value * 100, 100 - scenario_b["liquidation_probability"], 100, 100]
+    values_c = [scenario_c["avg_net_value"] / max_net_value * 100, 100 - scenario_c["liquidation_probability"], 50, 50]
+    fig = go.Figure()
+    for i, category in enumerate(categories):
+        fig.add_trace(go.Bar(x=["A - Sell BTC to Buy House", "B - Borrow Against BTC", "C - Self-Paying Mortgage via Bitcoin Gains"], y=[values_a[i], values_b[i], values_c[i]], name=category))
+    fig.update_layout(barmode='group', title="Scenario Comparison (Bar Chart)", xaxis_title="Scenario", yaxis_title="Score (0-100)")
+    return fig
+
+def create_sensitivity_chart(inputs):
+    """Create a sensitivity analysis chart for BTC appreciation rate."""
+    btc_rates = np.linspace(-0.2, 1.0, 20)
+    net_values_a, net_values_b, net_values_c = [], [], []
+    for rate in btc_rates:
+        temp_model = BTCHousingModel(**inputs)
+        temp_model.rb = rate
+        a = temp_model.scenario_a_sell_btc()
+        b = temp_model.scenario_b_borrow_against_btc(btc_rate=rate)
+        c = temp_model.scenario_c_self_paying_mortgage(btc_rate=rate)
+        net_values_a.append(a["net_value"])
+        net_values_b.append(b["avg_net_value"])
+        net_values_c.append(c["avg_net_value"])
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=btc_rates*100, y=net_values_a, mode='lines', name='A - Sell BTC to Buy House'))
+    fig.add_trace(go.Scatter(x=btc_rates*100, y=net_values_b, mode='lines', name='B - Borrow Against BTC'))
+    fig.add_trace(go.Scatter(x=btc_rates*100, y=net_values_c, mode='lines', name='C - Self-Paying Mortgage via Bitcoin Gains'))
+    fig.update_layout(title='Sensitivity of Base Net Value to BTC Appreciation Rate', xaxis_title='BTC Annual Appreciation Rate (%)', yaxis_title='Base Net Value ($)')
     return fig
 
 # Streamlit UI
@@ -331,31 +377,16 @@ with tab2:
 
 with tab3:
     st.header("Charts")
-    fig_dist = go.Figure()
-    for scenario_name in simulations:
-        fig_dist.add_trace(go.Histogram(x=simulations[scenario_name]["All Results"], name=scenario_name, opacity=0.6))
-    fig_dist.update_layout(barmode='overlay', title="Distribution of Net Values", xaxis_title="Net Value ($)", yaxis_title="Count")
+    fig_dist = create_distribution_chart(scenario_a, scenario_b, scenario_c)
     st.plotly_chart(fig_dist)
     
     fig_radar = create_radar_chart(scenario_a, scenario_b, scenario_c)
     st.plotly_chart(fig_radar)
     
+    fig_bar = create_bar_chart(scenario_a, scenario_b, scenario_c)
+    st.plotly_chart(fig_bar)
+    
     with st.expander("Sensitivity Analysis"):
         st.subheader("Sensitivity to BTC Appreciation Rate")
-        btc_rates = np.linspace(-0.2, 1.0, 20)
-        net_values_a, net_values_b, net_values_c = [], [], []
-        for rate in btc_rates:
-            temp_model = BTCHousingModel(**inputs)
-            temp_model.rb = rate
-            a = temp_model.scenario_a_sell_btc()
-            b = temp_model.scenario_b_borrow_against_btc(btc_rate=rate)
-            c = temp_model.scenario_c_self_paying_mortgage(btc_rate=rate)
-            net_values_a.append(a["net_value"])
-            net_values_b.append(b["avg_net_value"])
-            net_values_c.append(c["avg_net_value"])
-        fig_sens = go.Figure()
-        fig_sens.add_trace(go.Scatter(x=btc_rates*100, y=net_values_a, mode='lines', name='A - Sell BTC to Buy House'))
-        fig_sens.add_trace(go.Scatter(x=btc_rates*100, y=net_values_b, mode='lines', name='B - Borrow Against BTC'))
-        fig_sens.add_trace(go.Scatter(x=btc_rates*100, y=net_values_c, mode='lines', name='C - Self-Paying Mortgage via Bitcoin Gains'))
-        fig_sens.update_layout(title='Net Value Sensitivity to BTC Appreciation Rate', xaxis_title='BTC Annual Appreciation Rate (%)', yaxis_title='Base Net Value ($)')
+        fig_sens = create_sensitivity_chart(inputs)
         st.plotly_chart(fig_sens)
