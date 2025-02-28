@@ -1413,38 +1413,48 @@ def main():
                     "Base Case",
                     "Bull Case",
                     "Risk Avoidance"
-                ],
-                "Scenario A": [
-                    st.session_state.scenario_a["net_value"],
-                    st.session_state.scenario_a["total_return"],
-                    st.session_state.scenario_a["final_house_value"],
-                    st.session_state.scenario_a["final_btc_value_if_held"],
-                    st.session_state.simulations["Scenario A"]["Bear Case"],
-                    st.session_state.simulations["Scenario A"]["Base Case"],
-                    st.session_state.simulations["Scenario A"]["Bull Case"],
-                    100  # No liquidation risk
-                ],
-                "Scenario B": [
-                    st.session_state.scenario_b["net_value"],
-                    st.session_state.scenario_b["total_return"],
-                    st.session_state.scenario_b["final_house_value"],
-                    st.session_state.scenario_b["final_btc_value"],
-                    st.session_state.simulations["Scenario B"]["Bear Case"],
-                    st.session_state.simulations["Scenario B"]["Base Case"],
-                    st.session_state.simulations["Scenario B"]["Bull Case"],
-                    100 - st.session_state.scenario_b.get("liquidation_probability", 0)  # Invert liquidation probability
-                ],
-                "Scenario C": [
-                    st.session_state.scenario_c["net_value"],
-                    st.session_state.scenario_c["total_return"],
-                    st.session_state.scenario_c["final_house_value"],
-                    st.session_state.scenario_c["final_btc_value"],
-                    st.session_state.simulations["Scenario C"]["Bear Case"],
-                    st.session_state.simulations["Scenario C"]["Base Case"],
-                    st.session_state.simulations["Scenario C"]["Bull Case"],
-                    100 - st.session_state.scenario_c.get("liquidation_probability", 0)  # Invert liquidation probability
                 ]
             }
+            
+            # Helper function to safely get values for radar chart
+            def safe_get_radar(scenario, key, default=0):
+                if key in scenario:
+                    return scenario[key]
+                return default
+            
+            # Safely populate radar data
+            radar_data["Scenario A"] = [
+                safe_get_radar(st.session_state.scenario_a, "net_value"),
+                safe_get_radar(st.session_state.scenario_a, "total_return"),
+                safe_get_radar(st.session_state.scenario_a, "final_house_value"),
+                safe_get_radar(st.session_state.scenario_a, "final_btc_value_if_held"),
+                st.session_state.simulations["Scenario A"]["Bear Case"],
+                st.session_state.simulations["Scenario A"]["Base Case"],
+                st.session_state.simulations["Scenario A"]["Bull Case"],
+                100  # No liquidation risk
+            ]
+            
+            radar_data["Scenario B"] = [
+                safe_get_radar(st.session_state.scenario_b, "net_value"),
+                safe_get_radar(st.session_state.scenario_b, "total_return"),
+                safe_get_radar(st.session_state.scenario_b, "final_house_value"),
+                safe_get_radar(st.session_state.scenario_b, "final_btc_value"),
+                st.session_state.simulations["Scenario B"]["Bear Case"],
+                st.session_state.simulations["Scenario B"]["Base Case"],
+                st.session_state.simulations["Scenario B"]["Bull Case"],
+                100 - st.session_state.scenario_b.get("liquidation_probability", 0)  # Invert liquidation probability
+            ]
+            
+            radar_data["Scenario C"] = [
+                safe_get_radar(st.session_state.scenario_c, "net_value"),
+                safe_get_radar(st.session_state.scenario_c, "total_return"),
+                safe_get_radar(st.session_state.scenario_c, "final_house_value"),
+                safe_get_radar(st.session_state.scenario_c, "final_btc_value"),
+                st.session_state.simulations["Scenario C"]["Bear Case"],
+                st.session_state.simulations["Scenario C"]["Base Case"],
+                st.session_state.simulations["Scenario C"]["Bull Case"],
+                100 - st.session_state.scenario_c.get("liquidation_probability", 0)  # Invert liquidation probability
+            ]
             
             # Normalize each category to 0-100 scale
             for category in radar_data["category"]:
