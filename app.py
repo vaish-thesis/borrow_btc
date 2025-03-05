@@ -783,7 +783,7 @@ def main():
                 st.session_state.simulation_results = simulation_results
                 
                 # Switch to results tab
-                st.experimental_rerun()
+                st.rerun()
 
     with tab2:
         if 'simulation_results' in st.session_state:
