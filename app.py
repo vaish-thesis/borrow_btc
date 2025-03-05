@@ -175,8 +175,10 @@ class BTCHousingModel:
         
         # Calculate loan value over time (assuming compounding)
         time_points = np.linspace(0, self.T, self.num_time_steps + 1)
-        loan_values = loan_amount * (1 + self.i_st) ** time_points[:, np.newaxis]
-        loan_values = loan_values.T  # Reshape to match btc_price_paths
+        # Create a loan values array with same shape as btc_price_paths
+        loan_values = np.zeros_like(btc_price_paths)
+        for i in range(self.num_simulations):
+            loan_values[i] = loan_amount * (1 + self.i_st) ** time_points
         
         # Calculate LTV ratios for each path at each time point
         btc_values = self.B0 * btc_price_paths
