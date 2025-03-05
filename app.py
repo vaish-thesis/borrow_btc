@@ -490,8 +490,10 @@ def create_liquidation_chart(scenario_b):
         xaxis_title='Time (Years)',
         yaxis_title='Number of Liquidations',
         yaxis2=dict(
-            title='Cumulative Percentage',
-            titlefont=dict(color='navy'),
+            title=dict(
+                text='Cumulative Percentage',
+                font=dict(color='navy')
+            ),
             tickfont=dict(color='navy'),
             overlaying='y',
             side='right',
